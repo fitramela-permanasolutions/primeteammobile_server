@@ -16,6 +16,19 @@ export const pool = mysql.createPool({
   queueLimit: 0,
   dateStrings: true,
 });
+// Test database connection
+pool.getConnection()
+  .then((connection) => {
+    console.log('✅ MySQL Database Connected Successfully!');
+    console.log(`📡 Host: ${process.env.DB_HOST || '127.0.0.1'}`);
+    console.log(`🗄️ Database: ${process.env.DB_NAME || 'sql_primeteam_permanasolutions_com'}`);
+
+    connection.release();
+  })
+  .catch((error) => {
+    console.error('❌ MySQL Database Connection Failed!');
+    console.error(error.message);
+  });
 
 /**
  * Returns the fully prefixed and escaped table name.

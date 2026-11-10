@@ -10,7 +10,7 @@ export class FileController {
             }
             const projectId = req.query.projectId ? parseInt(req.query.projectId, 10) : undefined;
             const page = parseInt(req.query.page, 10) || 1;
-            const limit = parseInt(req.query.limit, 10) || 20;
+            const limit = parseInt(req.query.limit, 10) || 30;
             const isAdmin = Boolean(req.user.is_admin);
             const files = await fileService.getFiles(req.user.id, isAdmin, projectId, page, limit);
             sendSuccess(res, files, 'Files retrieved');
@@ -46,12 +46,16 @@ export class FileController {
                 sendError(res, 'Invalid file ID', 400);
                 return;
             }
-            const { filePath, fileName } = await fileService.getFilePath(fileId, type);
-            if (!fs.existsSync(filePath)) {
-                sendError(res, 'File does not exist on disk', 404);
+            const target = await fileService.getFileDownloadTarget(fileId, type);
+            if (target.redirectUrl) {
+                res.redirect(target.redirectUrl);
                 return;
             }
-            res.download(filePath, fileName);
+            if (!target.filePath || !fs.existsSync(target.filePath)) {
+                sendError(res, 'File tidak ditemukan di penyimpanan server', 404);
+                return;
+            }
+            res.download(target.filePath, target.fileName);
         }
         catch (error) {
             sendError(res, error.message || 'Failed to download file', 404);

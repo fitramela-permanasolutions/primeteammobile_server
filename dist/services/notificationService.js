@@ -1,4 +1,5 @@
 import { pool, table } from '../config/database.js';
+import { resolveCiFile, stripHtml, toIsoUtc } from '../utils/ciHelpers.js';
 export class NotificationService {
     async getNotifications(userId, page = 1, limit = 20) {
         const offset = (page - 1) * limit;
@@ -23,23 +24,26 @@ export class NotificationService {
          AND FIND_IN_SET(?, notify_to) != 0
          AND (FIND_IN_SET(?, read_by) = 0 OR read_by IS NULL OR read_by = '')`, [userId, userId]);
         return {
-            notifications: rows.map((r) => ({
-                id: r.id,
-                event: r.event,
-                description: r.description.replace(/<[^>]*>?/gm, ''), // Strip HTML tags
-                rawDescription: r.description,
-                created_at: r.created_at,
-                is_read: Boolean(r.is_read),
-                project_id: r.project_id || null,
-                project_title: r.project_title || null,
-                task_id: r.task_id || null,
-                task_title: r.task_title || null,
-                creator: {
-                    id: r.user_id,
-                    name: r.creator_name || 'System',
-                    avatar: r.creator_avatar,
-                },
-            })),
+            notifications: rows.map((r) => {
+                const avatarResolved = resolveCiFile(r.creator_avatar, 'profile_images');
+                return {
+                    id: r.id,
+                    event: r.event,
+                    description: stripHtml(r.description),
+                    rawDescription: r.description,
+                    created_at: toIsoUtc(r.created_at) || r.created_at,
+                    is_read: Boolean(r.is_read),
+                    project_id: r.project_id || null,
+                    project_title: r.project_title || null,
+                    task_id: r.task_id || null,
+                    task_title: r.task_title || null,
+                    creator: {
+                        id: r.user_id,
+                        name: r.creator_name?.trim() || 'System',
+                        avatar: avatarResolved?.thumbnailUrl || null,
+                    },
+                };
+            }),
             unread_count: unreadRows[0].unread_count || 0,
             page,
             limit,

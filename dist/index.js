@@ -6,6 +6,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import routes from './routes/index.js';
 import { errorHandler } from './middlewares/errorHandler.js';
+import { debugMiddleware } from './middlewares/debugMiddleware.js';
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,6 +16,8 @@ const port = parseInt(process.env.PORT || '5000', 10);
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// Debug Middleware (activates when DEBUG=1)
+app.use(debugMiddleware);
 // Static file hosting for uploads/attachments from CI paas/files
 const filesDir = path.resolve(__dirname, '../../paas/files');
 if (fs.existsSync(filesDir)) {
@@ -50,5 +53,8 @@ app.use(errorHandler);
 app.listen(port, () => {
     console.log(`[PrimeTeam API] Server is running on http://localhost:${port}`);
     console.log(`[PrimeTeam API] OpenAPI Spec available at http://localhost:${port}/docs/openapi.json`);
+    if (process.env.DEBUG === '1') {
+        console.log(`[PrimeTeam API] 🐞 DEBUG Mode ACTIVE (Logging API endpoints & response bodies)`);
+    }
 });
 export default app;

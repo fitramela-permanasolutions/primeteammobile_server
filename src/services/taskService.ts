@@ -1,5 +1,6 @@
 import { pool, table } from '../config/database.js';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { resolveCiFile, stripHtml, toIsoUtc } from '../utils/ciHelpers.js';
 
 export interface TaskFilterOptions {
   projectId?: number;
@@ -69,28 +70,31 @@ export class TaskService {
       params
     );
 
-    return rows.map((r) => ({
-      id: r.id,
-      title: r.title,
-      description: r.description,
-      project_id: r.project_id,
-      project_title: r.project_title || 'General',
-      assigned_to: r.assigned_to,
-      assigned_to_name: r.assigned_to_name || 'Unassigned',
-      assigned_to_avatar: r.assigned_to_avatar,
-      deadline: r.deadline,
-      start_date: r.start_date,
-      points: r.points,
-      status: r.status,
-      status_id: r.status_id,
-      status_title: r.status_title || r.status,
-      status_color: r.status_color || '#3b82f6',
-      priority_id: r.priority_id,
-      priority_title: r.priority_title || 'Normal',
-      priority_color: r.priority_color || '#64748b',
-      labels: r.labels,
-      status_changed_at: r.status_changed_at,
-    }));
+    return rows.map((r) => {
+      const avatarResolved = resolveCiFile(r.assigned_to_avatar, 'profile_images');
+      return {
+        id: r.id,
+        title: r.title,
+        description: stripHtml(r.description),
+        project_id: r.project_id,
+        project_title: r.project_title || 'General',
+        assigned_to: r.assigned_to,
+        assigned_to_name: r.assigned_to_name?.trim() || 'Unassigned',
+        assigned_to_avatar: avatarResolved?.thumbnailUrl || null,
+        deadline: r.deadline && !String(r.deadline).startsWith('0000') ? r.deadline : null,
+        start_date: r.start_date && !String(r.start_date).startsWith('0000') ? r.start_date : null,
+        points: r.points,
+        status: r.status,
+        status_id: r.status_id,
+        status_title: r.status_title || r.status,
+        status_color: r.status_color || '#3b82f6',
+        priority_id: r.priority_id,
+        priority_title: r.priority_title || 'Normal',
+        priority_color: r.priority_color || '#64748b',
+        labels: r.labels,
+        status_changed_at: toIsoUtc(r.status_changed_at) || r.status_changed_at,
+      };
+    });
   }
 
   async getTaskById(taskId: number, userId: number, isAdmin: boolean) {
@@ -115,22 +119,23 @@ export class TaskService {
     );
 
     if (rows.length === 0) {
-      throw new Error('Task not found');
+      throw new Error('Task tidak ditemukan');
     }
 
     const r = rows[0];
+    const avatarResolved = resolveCiFile(r.assigned_to_avatar, 'profile_images');
     return {
       id: r.id,
       title: r.title,
-      description: r.description,
+      description: stripHtml(r.description),
       project_id: r.project_id,
       project_title: r.project_title || 'General',
       assigned_to: r.assigned_to,
-      assigned_to_name: r.assigned_to_name || 'Unassigned',
-      assigned_to_avatar: r.assigned_to_avatar,
+      assigned_to_name: r.assigned_to_name?.trim() || 'Unassigned',
+      assigned_to_avatar: avatarResolved?.thumbnailUrl || null,
       assigned_to_email: r.assigned_to_email,
-      deadline: r.deadline,
-      start_date: r.start_date,
+      deadline: r.deadline && !String(r.deadline).startsWith('0000') ? r.deadline : null,
+      start_date: r.start_date && !String(r.start_date).startsWith('0000') ? r.start_date : null,
       points: r.points,
       status: r.status,
       status_id: r.status_id,
@@ -142,7 +147,7 @@ export class TaskService {
       labels: r.labels,
       collaborators: r.collaborators,
       created_date: r.created_date,
-      status_changed_at: r.status_changed_at,
+      status_changed_at: toIsoUtc(r.status_changed_at) || r.status_changed_at,
     };
   }
 
@@ -154,27 +159,34 @@ export class TaskService {
     );
 
     if (statusRows.length === 0) {
-      throw new Error('Invalid task status ID');
+      throw new Error('Status ID task tidak valid');
     }
 
     const taskStatus = statusRows[0];
     // Map status key to enum ('to_do', 'in_progress', 'done')
     let enumStatus: 'to_do' | 'in_progress' | 'done' = 'in_progress';
-    if (taskStatus.key_name === 'to_do' || taskStatus.id === 1) {
+    const titleLower = String(taskStatus.title || '').toLowerCase();
+    if (taskStatus.key_name === 'to_do' || taskStatus.id === 1 || titleLower.includes('to do')) {
       enumStatus = 'to_do';
-    } else if (taskStatus.key_name === 'done' || taskStatus.id === 3 || taskStatus.id === 4) {
+    } else if (
+      taskStatus.key_name === 'done' ||
+      taskStatus.id === 3 ||
+      taskStatus.id === 4 ||
+      titleLower.includes('done') ||
+      titleLower.includes('complete')
+    ) {
       enumStatus = 'done';
     }
 
     const [result] = await pool.query<ResultSetHeader>(
       `UPDATE ${table('tasks')}
-       SET status_id = ?, status = ?, status_changed_at = NOW()
+       SET status_id = ?, status = ?, status_changed_at = UTC_TIMESTAMP()
        WHERE id = ? AND deleted = 0`,
       [statusId, enumStatus, taskId]
     );
 
     if (result.affectedRows === 0) {
-      throw new Error('Task not found or update failed');
+      throw new Error('Task tidak ditemukan atau gagal diperbarui');
     }
 
     return this.getTaskById(taskId, userId, true);

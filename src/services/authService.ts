@@ -3,6 +3,7 @@ import { verifyPassword, hashPassword } from '../utils/password.js';
 import { generateToken } from '../config/jwt.js';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { UserRecord, UserTokenPayload } from '../types/index.js';
+import { resolveCiFile, toIsoUtc } from '../utils/ciHelpers.js';
 
 export class AuthService {
   async login(email: string, plainPassword: string) {
@@ -34,7 +35,7 @@ export class AuthService {
 
     // Update last_online timestamp
     await pool.query(
-      `UPDATE ${table('users')} SET last_online = NOW(), is_logged_in = 1 WHERE id = ?`,
+      `UPDATE ${table('users')} SET last_online = UTC_TIMESTAMP(), is_logged_in = 1 WHERE id = ?`,
       [user.id]
     );
 
@@ -48,6 +49,7 @@ export class AuthService {
     };
 
     const token = generateToken(tokenPayload);
+    const resolvedAvatar = resolveCiFile(user.image, 'profile_images');
 
     return {
       token,
@@ -59,7 +61,7 @@ export class AuthService {
         user_type: user.user_type,
         is_admin: Boolean(user.is_admin),
         job_title: user.job_title,
-        image: user.image,
+        image: resolvedAvatar?.thumbnailUrl || null,
         phone: user.phone,
         address: user.address,
       },
@@ -84,6 +86,8 @@ export class AuthService {
     }
 
     const user = rows[0];
+    const resolvedAvatar = resolveCiFile(user.image, 'profile_images');
+
     return {
       id: user.id,
       first_name: user.first_name,
@@ -94,14 +98,14 @@ export class AuthService {
       job_title: user.job_title,
       role_id: user.role_id,
       role_title: user.role_title || (user.is_admin ? 'Admin' : 'Staff Member'),
-      image: user.image,
+      image: resolvedAvatar?.thumbnailUrl || null,
       phone: user.phone,
       address: user.address,
       dob: user.dob,
       gender: user.gender,
       language: user.language || 'english',
-      created_at: user.created_at,
-      last_online: user.last_online,
+      created_at: toIsoUtc(user.created_at) || user.created_at,
+      last_online: toIsoUtc(user.last_online) || user.last_online,
     };
   }
 

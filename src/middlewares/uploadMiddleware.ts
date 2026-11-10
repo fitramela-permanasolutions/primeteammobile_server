@@ -25,10 +25,13 @@ const storage = multer.diskStorage({
     cb(null, targetDir);
   },
   filename: (req, file, cb) => {
-    // Generate safe filename matching CI style: timestamp-random-cleaned_name
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
-    cb(null, `${uniqueSuffix}_${sanitizedName}`);
+    // Generate filename matching CodeIgniter 4 move_temp_file() convention: _file<hex>-<sanitized_name>
+    const uniqHex = Date.now().toString(16) + Math.floor(Math.random() * 0xfff).toString(16);
+    const sanitizedName = file.originalname
+      .replace(/\s+/g, '-')
+      .replace(/['’()]/g, '-')
+      .replace(/[^a-zA-Z0-9._-]/g, '');
+    cb(null, `_file${uniqHex}-${sanitizedName}`);
   },
 });
 

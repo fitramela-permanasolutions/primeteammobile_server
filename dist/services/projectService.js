@@ -1,4 +1,5 @@
 import { pool, table } from '../config/database.js';
+import { resolveCiFile, stripHtml } from '../utils/ciHelpers.js';
 export class ProjectService {
     async getProjects(userId, isAdmin, status) {
         let whereClause = `WHERE p.deleted = 0`;
@@ -19,7 +20,7 @@ export class ProjectService {
               p.client_id, p.created_date, p.created_by, p.status, p.status_id,
               p.price, c.company_name AS client_name,
               COUNT(t.id) AS total_tasks,
-              SUM(CASE WHEN t.status = 'done' OR t.status_id = 3 THEN 1 ELSE 0 END) AS completed_tasks
+              SUM(CASE WHEN t.status = 'done' OR t.status_id IN (3, 4) THEN 1 ELSE 0 END) AS completed_tasks
        FROM ${table('projects')} p
        LEFT JOIN ${table('clients')} c ON c.id = p.client_id
        LEFT JOIN ${table('tasks')} t ON t.project_id = p.id AND t.deleted = 0
@@ -33,7 +34,7 @@ export class ProjectService {
             return {
                 id: p.id,
                 title: p.title,
-                description: p.description,
+                description: stripHtml(p.description),
                 project_type: p.project_type,
                 start_date: p.start_date,
                 deadline: p.deadline,
@@ -52,14 +53,14 @@ export class ProjectService {
               p.client_id, p.created_date, p.created_by, p.status, p.status_id,
               p.price, c.company_name AS client_name,
               COUNT(t.id) AS total_tasks,
-              SUM(CASE WHEN t.status = 'done' OR t.status_id = 3 THEN 1 ELSE 0 END) AS completed_tasks
+              SUM(CASE WHEN t.status = 'done' OR t.status_id IN (3, 4) THEN 1 ELSE 0 END) AS completed_tasks
        FROM ${table('projects')} p
        LEFT JOIN ${table('clients')} c ON c.id = p.client_id
        LEFT JOIN ${table('tasks')} t ON t.project_id = p.id AND t.deleted = 0
        WHERE p.id = ? AND p.deleted = 0
        GROUP BY p.id`, [projectId]);
         if (projectRows.length === 0) {
-            throw new Error('Project not found');
+            throw new Error('Project tidak ditemukan');
         }
         const project = projectRows[0];
         // Check authorization if not admin
@@ -67,7 +68,7 @@ export class ProjectService {
             const [memberCheck] = await pool.query(`SELECT id FROM ${table('project_members')}
          WHERE project_id = ? AND user_id = ? AND deleted = 0`, [projectId, userId]);
             if (memberCheck.length === 0 && project.created_by !== userId) {
-                throw new Error('You do not have access to this project');
+                throw new Error('Anda tidak memiliki akses ke project ini');
             }
         }
         // Get project members
@@ -82,7 +83,7 @@ export class ProjectService {
         return {
             id: project.id,
             title: project.title,
-            description: project.description,
+            description: stripHtml(project.description),
             project_type: project.project_type,
             start_date: project.start_date,
             deadline: project.deadline,
@@ -92,15 +93,18 @@ export class ProjectService {
             total_tasks: totalTasks,
             completed_tasks: completedTasks,
             progress,
-            members: members.map((m) => ({
-                id: m.id,
-                user_id: m.user_id,
-                is_leader: Boolean(m.is_leader),
-                name: `${m.first_name} ${m.last_name}`,
-                email: m.email,
-                job_title: m.job_title,
-                avatar: m.image,
-            })),
+            members: members.map((m) => {
+                const avatarResolved = resolveCiFile(m.image, 'profile_images');
+                return {
+                    id: m.id,
+                    user_id: m.user_id,
+                    is_leader: Boolean(m.is_leader),
+                    name: `${m.first_name || ''} ${m.last_name || ''}`.trim(),
+                    email: m.email,
+                    job_title: m.job_title,
+                    avatar: avatarResolved?.thumbnailUrl || null,
+                };
+            }),
         };
     }
 }
