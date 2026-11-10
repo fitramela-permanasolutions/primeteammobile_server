@@ -1,0 +1,14 @@
+import { Router } from 'express';
+import { taskController } from '../controllers/taskController.js';
+import { authMiddleware } from '../middlewares/authMiddleware.js';
+
+const router = Router();
+
+router.use(authMiddleware);
+
+router.get('/statuses', (req, res) => taskController.getStatuses(req, res));
+router.get('/', (req, res) => taskController.getTasks(req, res));
+router.get('/:id', (req, res) => taskController.getTaskById(req, res));
+router.patch('/:id/status', (req, res) => taskController.updateStatus(req, res));
+
+export default router;

@@ -1,0 +1,14 @@
+import { Router } from 'express';
+import { attendanceController } from '../controllers/attendanceController.js';
+import { authMiddleware } from '../middlewares/authMiddleware.js';
+
+const router = Router();
+
+router.use(authMiddleware);
+
+router.get('/status', (req, res) => attendanceController.getStatus(req, res));
+router.post('/clock-in', (req, res) => attendanceController.clockIn(req, res));
+router.post('/clock-out', (req, res) => attendanceController.clockOut(req, res));
+router.get('/history', (req, res) => attendanceController.getHistory(req, res));
+
+export default router;

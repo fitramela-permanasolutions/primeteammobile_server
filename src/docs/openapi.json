@@ -1,0 +1,307 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "PrimeTeam Mobile API",
+    "version": "1.0.0",
+    "description": "RESTful API Backend for PrimeTeam Mobile app, sharing database with CodeIgniter 4 RISE CRM."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:5000/api/v1",
+      "description": "Local Development Server"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "ApiResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "message": { "type": "string" },
+          "data": { "type": "object" },
+          "errors": { "type": "object" }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email", "example": "ekie.wachidi@gmail.com" },
+          "password": { "type": "string", "example": "password123" }
+        }
+      },
+      "ClockInRequest": {
+        "type": "object",
+        "properties": {
+          "latitude": { "type": "number", "example": -6.2088 },
+          "longitude": { "type": "number", "example": 106.8456 },
+          "address": { "type": "string", "example": "Jl. Jendral Sudirman No. 1, Jakarta" },
+          "selfieUrl": { "type": "string" },
+          "note": { "type": "string", "example": "WFO - Daily Standup" }
+        }
+      },
+      "ClockOutRequest": {
+        "type": "object",
+        "properties": {
+          "latitude": { "type": "number", "example": -6.2088 },
+          "longitude": { "type": "number", "example": 106.8456 },
+          "address": { "type": "string", "example": "Jl. Jendral Sudirman No. 1, Jakarta" },
+          "note": { "type": "string", "example": "Selesai sprint task" }
+        }
+      },
+      "TaskStatusUpdate": {
+        "type": "object",
+        "required": ["statusId"],
+        "properties": {
+          "statusId": { "type": "integer", "example": 2 }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/auth/login": {
+      "post": {
+        "summary": "Authenticate user and get JWT token",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/LoginRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Login successful" },
+          "401": { "description": "Invalid credentials" }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "summary": "Get authenticated user profile",
+        "responses": {
+          "200": { "description": "User profile" }
+        }
+      }
+    },
+    "/attendance/status": {
+      "get": {
+        "summary": "Get active clock-in status",
+        "responses": {
+          "200": { "description": "Current status" }
+        }
+      }
+    },
+    "/attendance/clock-in": {
+      "post": {
+        "summary": "Clock in with GPS location and optional selfie",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ClockInRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Clock in registered" }
+        }
+      }
+    },
+    "/attendance/clock-out": {
+      "post": {
+        "summary": "Clock out with GPS location and note",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ClockOutRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Clock out registered" }
+        }
+      }
+    },
+    "/attendance/history": {
+      "get": {
+        "summary": "Get user attendance history",
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } },
+          { "name": "startDate", "in": "query", "schema": { "type": "string" } },
+          { "name": "endDate", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Attendance history with month stats" }
+        }
+      }
+    },
+    "/projects": {
+      "get": {
+        "summary": "List projects with progress and task counts",
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["open", "completed", "hold", "canceled"] } }
+        ],
+        "responses": {
+          "200": { "description": "Projects list" }
+        }
+      }
+    },
+    "/projects/{id}": {
+      "get": {
+        "summary": "Get project details and assigned team members",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "Project detail" }
+        }
+      }
+    },
+    "/tasks/statuses": {
+      "get": {
+        "summary": "Get all task statuses for Kanban board",
+        "responses": {
+          "200": { "description": "Statuses list" }
+        }
+      }
+    },
+    "/tasks": {
+      "get": {
+        "summary": "List tasks with filters",
+        "parameters": [
+          { "name": "projectId", "in": "query", "schema": { "type": "integer" } },
+          { "name": "statusId", "in": "query", "schema": { "type": "integer" } },
+          { "name": "assignedTo", "in": "query", "schema": { "type": "integer" } },
+          { "name": "onlyMyTasks", "in": "query", "schema": { "type": "boolean" } }
+        ],
+        "responses": {
+          "200": { "description": "Tasks list" }
+        }
+      }
+    },
+    "/tasks/{id}": {
+      "get": {
+        "summary": "Get task details",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "Task detail" }
+        }
+      }
+    },
+    "/tasks/{id}/status": {
+      "patch": {
+        "summary": "Update task status (e.g. drag & drop Kanban)",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TaskStatusUpdate" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Task status updated" }
+        }
+      }
+    },
+    "/notifications": {
+      "get": {
+        "summary": "Get notifications list with unread counter",
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "Notifications list" }
+        }
+      }
+    },
+    "/notifications/{id}/read": {
+      "patch": {
+        "summary": "Mark single notification as read",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "Marked as read" }
+        }
+      }
+    },
+    "/notifications/mark-all-read": {
+      "post": {
+        "summary": "Mark all notifications as read",
+        "responses": {
+          "200": { "description": "All marked as read" }
+        }
+      }
+    },
+    "/files": {
+      "get": {
+        "summary": "List documents and attachments",
+        "parameters": [
+          { "name": "projectId", "in": "query", "schema": { "type": "integer" } },
+          { "name": "page", "in": "query", "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "Files list" }
+        }
+      }
+    },
+    "/files/upload": {
+      "post": {
+        "summary": "Upload file / photo attachment",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": { "type": "string", "format": "binary" },
+                  "project_id": { "type": "integer" },
+                  "description": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "File uploaded" }
+        }
+      }
+    },
+    "/files/{id}/download": {
+      "get": {
+        "summary": "Download file content",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "type", "in": "query", "schema": { "type": "string", "enum": ["project", "general"] } }
+        ],
+        "responses": {
+          "200": { "description": "File stream binary" }
+        }
+      }
+    }
+  }
+}
