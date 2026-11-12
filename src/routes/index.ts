@@ -6,6 +6,8 @@ import taskRoutes from './taskRoutes.js';
 import notificationRoutes from './notificationRoutes.js';
 import fileRoutes from './fileRoutes.js';
 import settingsRoutes from './settingsRoutes.js';
+import googleWorkspaceRoutes from './googleWorkspaceRoutes.js';
+import workspaceRoutes from './workspaceRoutes.js';
 
 const router = Router();
 
@@ -16,5 +18,7 @@ router.use('/tasks', taskRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/files', fileRoutes);
 router.use('/settings', settingsRoutes);
+router.use('/google', googleWorkspaceRoutes);
+router.use('/workspace', workspaceRoutes);
 
 export default router;

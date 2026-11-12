@@ -80,8 +80,14 @@ export class GoogleDriveService {
                     }
                 }
                 else {
-                    // Refresh token expired or revoked in Google Console
-                    return null;
+                    // Try fallback to Google Docs or Google Sheets OAuth tokens which also have Google Drive scope
+                    const fallbackToken = await this.getFallbackDriveTokenFromPlugins();
+                    if (fallbackToken) {
+                        accessToken = fallbackToken;
+                    }
+                    else {
+                        return null;
+                    }
                 }
             }
             catch {
@@ -94,6 +100,52 @@ export class GoogleDriveService {
             parentFolderId: settings.google_drive_parent_folder_id || '',
             folderIds,
         };
+    }
+    async getFallbackDriveTokenFromPlugins() {
+        const tables = [
+            {
+                tableName: 'google_docs_integration_settings',
+                idKey: 'google_docs_client_id',
+                secretKey: 'google_docs_client_secret',
+                tokenKey: 'google_docs_oauth_access_token',
+            },
+            {
+                tableName: 'google_sheets_integration_settings',
+                idKey: 'google_sheets_client_id',
+                secretKey: 'google_sheets_client_secret',
+                tokenKey: 'google_sheets_oauth_access_token',
+            },
+        ];
+        for (const cfg of tables) {
+            try {
+                const [rows] = await pool.query(`SELECT setting_name, setting_value FROM ${table(cfg.tableName)} WHERE deleted = 0`);
+                const map = {};
+                for (const r of rows)
+                    map[r.setting_name] = r.setting_value || '';
+                const tokenObj = JSON.parse(map[cfg.tokenKey] || '{}');
+                if (map[cfg.idKey] && map[cfg.secretKey] && tokenObj.refresh_token) {
+                    const res = await fetch('https://oauth2.googleapis.com/token', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: new URLSearchParams({
+                            client_id: map[cfg.idKey],
+                            client_secret: map[cfg.secretKey],
+                            refresh_token: tokenObj.refresh_token,
+                            grant_type: 'refresh_token',
+                        }),
+                    });
+                    if (res.ok) {
+                        const refreshed = await res.json();
+                        if (refreshed.access_token)
+                            return refreshed.access_token;
+                    }
+                }
+            }
+            catch {
+                // Continue
+            }
+        }
+        return null;
     }
     /**
      * Ensures a target subfolder (e.g., 'project_files', 'general') exists in Google Drive

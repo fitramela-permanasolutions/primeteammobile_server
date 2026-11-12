@@ -39,6 +39,32 @@ export class AuthService {
       [user.id]
     );
 
+    // Check Auto_Attendance plugin: auto_clock_in_on_signin
+    if (user.user_type === 'staff') {
+      try {
+        const [aaRows] = await pool.query<RowDataPacket[]>(
+          `SELECT setting_value FROM ${table('auto_attendance_settings')}
+           WHERE setting_name = 'auto_clock_in_on_signin' AND deleted = 0 LIMIT 1`
+        );
+        if (aaRows.length > 0 && aaRows[0].setting_value === '1') {
+          const [activeAtt] = await pool.query<RowDataPacket[]>(
+            `SELECT id FROM ${table('attendance')}
+             WHERE user_id = ? AND status = 'incomplete' AND deleted = 0 LIMIT 1`,
+            [user.id]
+          );
+          if (activeAtt.length === 0) {
+            await pool.query(
+              `INSERT INTO ${table('attendance')} (status, user_id, in_time, note, deleted)
+               VALUES ('incomplete', ?, UTC_TIMESTAMP(), 'Auto Clock-In on Sign In (Mobile)', 0)`,
+              [user.id]
+            );
+          }
+        }
+      } catch {
+        // Ignore if auto_attendance_settings table is absent
+      }
+    }
+
     const tokenPayload: UserTokenPayload = {
       id: user.id,
       email: user.email,
@@ -144,6 +170,25 @@ export class AuthService {
       `UPDATE ${table('users')} SET is_logged_in = 0 WHERE id = ?`,
       [userId]
     );
+
+    // Check Auto_Attendance plugin: auto_clock_out_on_signout
+    try {
+      const [aaRows] = await pool.query<RowDataPacket[]>(
+        `SELECT setting_value FROM ${table('auto_attendance_settings')}
+         WHERE setting_name = 'auto_clock_out_on_signout' AND deleted = 0 LIMIT 1`
+      );
+      if (aaRows.length > 0 && aaRows[0].setting_value === '1') {
+        await pool.query(
+          `UPDATE ${table('attendance')}
+           SET status = 'pending', out_time = UTC_TIMESTAMP()
+           WHERE user_id = ? AND status = 'incomplete' AND deleted = 0`,
+          [userId]
+        );
+      }
+    } catch {
+      // Ignore
+    }
+
     return { message: 'Logged out successfully' };
   }
 }

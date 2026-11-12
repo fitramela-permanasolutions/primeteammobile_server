@@ -13,6 +13,15 @@ export class TaskController {
     }
   }
 
+  async getPriorities(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const priorities = await taskService.getPriorities();
+      sendSuccess(res, priorities, 'Task priorities retrieved');
+    } catch (error: any) {
+      sendError(res, error.message || 'Failed to retrieve priorities', 500);
+    }
+  }
+
   async getTasks(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       if (!req.user) {
@@ -79,6 +88,50 @@ export class TaskController {
       sendSuccess(res, updated, 'Task status updated');
     } catch (error: any) {
       sendError(res, error.message || 'Failed to update task status', 400);
+    }
+  }
+
+  async addChecklistItem(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const taskId = parseInt(req.params.id, 10);
+      const { title } = req.body;
+      if (!title || !String(title).trim()) {
+        sendError(res, 'Judul checklist wajib diisi', 400);
+        return;
+      }
+      const created = await taskService.addChecklistItem(taskId, String(title));
+      sendSuccess(res, created, 'Checklist item added', 201);
+    } catch (error: any) {
+      sendError(res, error.message || 'Failed to add checklist item', 500);
+    }
+  }
+
+  async toggleChecklistItem(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const itemId = parseInt(req.params.itemId, 10);
+      const toggled = await taskService.toggleChecklistItem(itemId);
+      sendSuccess(res, toggled, 'Checklist item toggled');
+    } catch (error: any) {
+      sendError(res, error.message || 'Failed to toggle checklist item', 500);
+    }
+  }
+
+  async addComment(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        sendError(res, 'Unauthorized', 401);
+        return;
+      }
+      const taskId = parseInt(req.params.id, 10);
+      const { description } = req.body;
+      if (!description || !String(description).trim()) {
+        sendError(res, 'Isi komentar wajib diisi', 400);
+        return;
+      }
+      const comment = await taskService.addTaskComment(taskId, req.user.id, String(description));
+      sendSuccess(res, comment, 'Comment added', 201);
+    } catch (error: any) {
+      sendError(res, error.message || 'Failed to add comment', 500);
     }
   }
 }
