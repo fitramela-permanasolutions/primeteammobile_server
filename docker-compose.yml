@@ -1,0 +1,43 @@
+services:
+  mobile_api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: primeteam_mobile_api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-5000}:5000"
+    env_file:
+      - .env
+    environment:
+      - PORT=5000
+      - NODE_ENV=production
+      # Host MariaDB di network yang sama
+      - DB_HOST=${DB_HOST:-mariadb}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - DB_PREFIX=${DB_PREFIX:-permana_}
+      - JWT_SECRET=${JWT_SECRET:-primeteam_jwt_secret_token_key_permanasolutions_2026}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
+      # Shared files directory sama dengan mount path di CodeIgniter
+      - UPLOAD_DIR=/var/www/html/files
+      - DEBUG=${DEBUG:-0}
+    volumes:
+      # Mount shared volume file yang dibuat oleh web CodeIgniter
+      - app_files:/var/www/html/files
+    networks:
+      - app_network
+
+volumes:
+  # Merujuk ke named volume yang sudah ada dari project web primeteam_original
+  app_files:
+    external: true
+    name: ${SHARED_FILES_VOLUME:-primeteam_original_app_files}
+
+networks:
+  # Bergabung ke docker network yang sudah dibuat oleh primeteam_original
+  app_network:
+    external: true
+    name: ${SHARED_NETWORK:-primeteam_original_app_network}
