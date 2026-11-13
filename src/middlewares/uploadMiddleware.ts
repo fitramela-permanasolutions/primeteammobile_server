@@ -1,28 +1,32 @@
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Base upload directory defaults to ../paas/files/
-const baseUploadDir = path.resolve(__dirname, '../../../paas/files');
+import { settingsService } from '../services/settingsService.js';
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const projectId = req.body.project_id || req.params.projectId;
-    let targetDir = path.join(baseUploadDir, 'general');
+  destination: async (req, file, cb) => {
+    try {
+      const baseUploadDir = await settingsService.getResolvedUploadBaseDir();
+      const projectId = req.body.project_id || req.body.projectId || req.params.projectId;
+      const isSystemUpload =
+        req.originalUrl?.includes('/settings/upload-logo') ||
+        req.originalUrl?.includes('/settings/upload-background');
 
-    if (projectId) {
-      targetDir = path.join(baseUploadDir, 'project_files', String(projectId));
+      let targetDir = path.join(baseUploadDir, 'general');
+      if (isSystemUpload) {
+        targetDir = path.join(baseUploadDir, 'system');
+      } else if (projectId) {
+        targetDir = path.join(baseUploadDir, 'project_files', String(projectId));
+      }
+
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
+
+      cb(null, targetDir);
+    } catch (err: any) {
+      cb(err, '');
     }
-
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
-    }
-
-    cb(null, targetDir);
   },
   filename: (req, file, cb) => {
     // Generate filename matching CodeIgniter 4 move_temp_file() convention: _file<hex>-<sanitized_name>

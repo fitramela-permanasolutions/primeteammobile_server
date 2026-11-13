@@ -5,6 +5,11 @@ export interface UserTokenPayload {
   email: string;
   user_type: 'staff' | 'client' | 'lead';
   is_admin: number;
+  role_id?: number;
+  role_title?: string;
+  role?: string;
+  job_title?: string;
+  client_id?: number;
   first_name: string;
   last_name: string;
 }

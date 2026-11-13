@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import routes from './routes/index.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { debugMiddleware } from './middlewares/debugMiddleware.js';
+import { settingsService } from './services/settingsService.js';
 
 dotenv.config();
 
@@ -24,11 +25,27 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Debug Middleware (activates when DEBUG=1)
 app.use(debugMiddleware);
 
-// Static file hosting for uploads/attachments from CI paas/files
-const filesDir = path.resolve(__dirname, '../../paas/files');
-if (fs.existsSync(filesDir)) {
-  app.use('/files-static', express.static(filesDir));
-}
+// Dynamic static file hosting for uploads/attachments from upload_doc_path and fallback paas/files
+const fallbackFilesDir = path.resolve(__dirname, '../../paas/files');
+app.use('/files-static', async (req, res, next) => {
+  try {
+    const dynamicDir = await settingsService.getResolvedUploadBaseDir();
+    const relPath = decodeURIComponent(req.path).replace(/^\/+/, '');
+    const dynamicCandidate = path.join(dynamicDir, relPath);
+    if (fs.existsSync(dynamicCandidate) && fs.statSync(dynamicCandidate).isFile()) {
+      res.sendFile(dynamicCandidate);
+      return;
+    }
+    const fallbackCandidate = path.join(fallbackFilesDir, relPath);
+    if (fs.existsSync(fallbackCandidate) && fs.statSync(fallbackCandidate).isFile()) {
+      res.sendFile(fallbackCandidate);
+      return;
+    }
+    next();
+  } catch {
+    next();
+  }
+});
 
 // Health check
 app.get('/health', (req, res) => {

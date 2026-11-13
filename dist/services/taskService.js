@@ -21,7 +21,7 @@ export class TaskService {
         }));
     }
     async getTasks(userId, isAdmin, filters) {
-        let whereClause = `WHERE t.deleted = 0`;
+        let whereClause = `WHERE t.deleted = 0 AND (t.project_id = 0 OR p.deleted = 0)`;
         const params = [];
         if (filters.projectId) {
             whereClause += ` AND t.project_id = ?`;
@@ -31,29 +31,41 @@ export class TaskService {
             whereClause += ` AND t.status_id = ?`;
             params.push(filters.statusId);
         }
+        if (filters.activeOnly) {
+            whereClause += ` AND t.status != 'done' AND t.status_id NOT IN (3, 4)`;
+        }
         if (filters.assignedTo) {
-            whereClause += ` AND t.assigned_to = ?`;
-            params.push(filters.assignedTo);
+            whereClause += ` AND (t.assigned_to = ? OR FIND_IN_SET(?, REPLACE(t.collaborators, ' ', '')))`;
+            params.push(filters.assignedTo, String(filters.assignedTo));
         }
         else if (filters.onlyMyTasks) {
-            whereClause += ` AND (t.assigned_to = ? OR FIND_IN_SET(?, t.collaborators))`;
-            params.push(userId, userId);
-        }
-        else if (!isAdmin && !filters.projectId) {
             whereClause += ` AND (
         t.assigned_to = ?
-        OR FIND_IN_SET(?, t.collaborators)
-        OR t.project_id IN (SELECT project_id FROM ${table('project_members')} WHERE user_id = ? AND deleted = 0)
+        OR FIND_IN_SET(?, REPLACE(t.collaborators, ' ', ''))
       )`;
-            params.push(userId, userId, userId);
+            params.push(userId, String(userId));
+        }
+        else if (!filters.projectId) {
+            whereClause += ` AND (
+        t.assigned_to = ?
+        OR FIND_IN_SET(?, REPLACE(t.collaborators, ' ', ''))
+        OR t.created_by = ?
+        OR t.project_id IN (SELECT pm.project_id FROM ${table('project_members')} pm WHERE pm.user_id = ? AND pm.deleted = 0)
+        OR (
+          p.client_id > 0 AND p.client_id = (
+            SELECT cu.client_id FROM ${table('users')} cu WHERE cu.id = ? AND cu.deleted = 0 LIMIT 1
+          )
+        )
+      )`;
+            params.push(userId, String(userId), userId, userId, userId);
         }
         const [rows] = await pool.query(`SELECT t.id, t.title, t.description, t.project_id, t.milestone_id,
               t.assigned_to, t.deadline, t.labels, t.points, t.status,
               t.status_id, t.priority_id, t.start_date, t.collaborators,
-              t.parent_task_id, t.created_date, t.status_changed_at,
+              t.parent_task_id, t.created_date, t.status_changed_at, t.created_by,
               p.title AS project_title,
               c.company_name AS client_name,
-              ts.title AS status_title, ts.color AS status_color,
+              ts.title AS status_title, ts.color AS status_color, ts.key_name AS status_key,
               tp.title AS priority_title, tp.color AS priority_color, tp.icon AS priority_icon,
               CONCAT(u.first_name, ' ', u.last_name) AS assigned_to_name,
               u.image AS assigned_to_avatar,
@@ -67,7 +79,13 @@ export class TaskService {
        LEFT JOIN ${table('task_priority')} tp ON tp.id = t.priority_id
        LEFT JOIN ${table('users')} u ON u.id = t.assigned_to
        ${whereClause}
-       ORDER BY t.sort ASC, t.id DESC`, params);
+       ORDER BY
+         CASE WHEN t.status = 'in_progress' OR t.status_id = 2 THEN 0
+              WHEN t.status = 'to_do' OR t.status_id = 1 THEN 1
+              ELSE 2
+         END ASC,
+         t.sort ASC,
+         t.id DESC`, params);
         return rows.map((r) => {
             const avatarResolved = resolveCiFile(r.assigned_to_avatar, 'profile_images');
             return {
@@ -81,6 +99,7 @@ export class TaskService {
                 assigned_to: r.assigned_to,
                 assigned_to_name: r.assigned_to_name?.trim() || 'Unassigned',
                 assigned_to_avatar: avatarResolved?.thumbnailUrl || null,
+                collaborators: r.collaborators || '',
                 deadline: r.deadline && !String(r.deadline).startsWith('0000') ? r.deadline : null,
                 start_date: r.start_date && !String(r.start_date).startsWith('0000') ? r.start_date : null,
                 points: r.points,
@@ -104,7 +123,7 @@ export class TaskService {
         const [rows] = await pool.query(`SELECT t.id, t.title, t.description, t.project_id, t.milestone_id,
               t.assigned_to, t.deadline, t.labels, t.points, t.status,
               t.status_id, t.priority_id, t.start_date, t.collaborators,
-              t.created_date, t.status_changed_at,
+              t.created_date, t.status_changed_at, t.created_by,
               p.title AS project_title,
               c.company_name AS client_name,
               m.title AS milestone_title,
@@ -139,6 +158,26 @@ export class TaskService {
        LEFT JOIN ${table('users')} u ON u.id = pc.created_by
        WHERE pc.task_id = ? AND pc.deleted = 0
        ORDER BY pc.created_at DESC, pc.id DESC`, [taskId]);
+        const mappedChecklists = checklistRows.map((c) => ({
+            id: c.id,
+            title: c.title,
+            is_checked: Boolean(c.is_checked),
+            sort: c.sort,
+        }));
+        const mappedComments = commentRows.map((c) => {
+            const cAvatar = resolveCiFile(c.user_avatar, 'profile_images');
+            const authorName = c.user_name?.trim() || 'User';
+            return {
+                id: c.id,
+                description: stripHtml(c.description),
+                created_at: toIsoUtc(c.created_at) || c.created_at,
+                created_by: c.created_by,
+                author_name: authorName,
+                user_name: authorName,
+                author_avatar: cAvatar?.thumbnailUrl || null,
+                user_avatar: cAvatar?.thumbnailUrl || null,
+            };
+        });
         return {
             id: r.id,
             title: r.title,
@@ -167,23 +206,11 @@ export class TaskService {
             collaborators: r.collaborators,
             created_date: r.created_date,
             status_changed_at: toIsoUtc(r.status_changed_at) || r.status_changed_at,
-            checklist_items: checklistRows.map((c) => ({
-                id: c.id,
-                title: c.title,
-                is_checked: Boolean(c.is_checked),
-                sort: c.sort,
-            })),
-            comments: commentRows.map((c) => {
-                const cAvatar = resolveCiFile(c.user_avatar, 'profile_images');
-                return {
-                    id: c.id,
-                    description: stripHtml(c.description),
-                    created_at: toIsoUtc(c.created_at) || c.created_at,
-                    created_by: c.created_by,
-                    user_name: c.user_name?.trim() || 'User',
-                    user_avatar: cAvatar?.thumbnailUrl || null,
-                };
-            }),
+            checklists: mappedChecklists,
+            checklist_items: mappedChecklists,
+            checklist_total: mappedChecklists.length,
+            checklist_completed: mappedChecklists.filter((c) => c.is_checked).length,
+            comments: mappedComments,
         };
     }
     async addChecklistItem(taskId, title) {

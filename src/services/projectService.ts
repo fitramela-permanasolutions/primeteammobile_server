@@ -3,31 +3,55 @@ import { RowDataPacket } from 'mysql2';
 import { resolveCiFile, stripHtml, toIsoUtc } from '../utils/ciHelpers.js';
 
 export class ProjectService {
-  async getProjects(userId: number, isAdmin: boolean, status?: string) {
+  async getProjects(
+    userId: number,
+    isAdmin: boolean,
+    status?: string,
+    onlyMyProjects = true
+  ) {
     let whereClause = `WHERE p.deleted = 0`;
     const params: any[] = [];
 
-    if (!isAdmin) {
+    // Filter projects related to the logged-in user (via project_members.user_id, created_by, task assignee/collaborator, or client_id)
+    if (onlyMyProjects || !isAdmin) {
       whereClause += ` AND (
-        p.id IN (SELECT project_id FROM ${table('project_members')} WHERE user_id = ? AND deleted = 0)
+        p.id IN (SELECT pm.project_id FROM ${table('project_members')} pm WHERE pm.user_id = ? AND pm.deleted = 0)
         OR p.created_by = ?
+        OR p.id IN (
+          SELECT st.project_id FROM ${table('tasks')} st
+          WHERE st.deleted = 0 AND (st.assigned_to = ? OR FIND_IN_SET(?, REPLACE(st.collaborators, ' ', '')))
+        )
+        OR (
+          p.client_id > 0 AND p.client_id = (
+            SELECT cu.client_id FROM ${table('users')} cu WHERE cu.id = ? AND cu.deleted = 0 LIMIT 1
+          )
+        )
       )`;
-      params.push(userId, userId);
+      params.push(userId, userId, userId, String(userId), userId);
     }
 
     if (status && ['open', 'completed', 'hold', 'canceled'].includes(status)) {
-      whereClause += ` AND p.status = ?`;
-      params.push(status);
+      if (status === 'open') {
+        whereClause += ` AND (p.status = 'open' AND (p.status_id = 1 OR p.status_id IS NULL OR ps.key_name = 'open'))`;
+      } else if (status === 'completed') {
+        whereClause += ` AND (p.status = 'completed' OR p.status_id = 2 OR ps.key_name = 'completed')`;
+      } else if (status === 'hold') {
+        whereClause += ` AND (p.status = 'hold' OR p.status_id = 3)`;
+      } else if (status === 'canceled') {
+        whereClause += ` AND (p.status = 'canceled' OR p.status_id = 4)`;
+      }
     }
 
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT p.id, p.title, p.description, p.project_type, p.start_date, p.deadline,
               p.client_id, p.created_date, p.created_by, p.status, p.status_id,
               p.price, p.labels, c.company_name AS client_name,
-              COUNT(t.id) AS total_tasks,
-              SUM(CASE WHEN t.status = 'done' OR t.status_id IN (3, 4) THEN 1 ELSE 0 END) AS completed_tasks
+              ps.title AS status_title, ps.key_name AS status_key,
+              COUNT(DISTINCT t.id) AS total_tasks,
+              COUNT(DISTINCT CASE WHEN t.status = 'done' OR t.status_id IN (3, 4) THEN t.id END) AS completed_tasks
        FROM ${table('projects')} p
        LEFT JOIN ${table('clients')} c ON c.id = p.client_id
+       LEFT JOIN ${table('project_status')} ps ON ps.id = p.status_id
        LEFT JOIN ${table('tasks')} t ON t.project_id = p.id AND t.deleted = 0
        ${whereClause}
        GROUP BY p.id
@@ -40,15 +64,25 @@ export class ProjectService {
       const completedTasks = Number(p.completed_tasks) || 0;
       const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
+      const resolvedStatus =
+        p.status_id === 2
+          ? 'completed'
+          : p.status_id === 3
+          ? 'hold'
+          : p.status_id === 4
+          ? 'canceled'
+          : p.status || 'open';
+
       return {
         id: p.id,
         title: p.title,
         description: stripHtml(p.description),
         project_type: p.project_type,
-        start_date: p.start_date,
-        deadline: p.deadline,
-        status: p.status,
+        start_date: p.start_date && !String(p.start_date).startsWith('0000') ? p.start_date : null,
+        deadline: p.deadline && !String(p.deadline).startsWith('0000') ? p.deadline : null,
+        status: resolvedStatus,
         status_id: p.status_id,
+        status_title: p.status_title || resolvedStatus,
         price: p.price,
         client_name: p.client_name || 'Internal',
         total_tasks: totalTasks,
@@ -63,10 +97,12 @@ export class ProjectService {
       `SELECT p.id, p.title, p.description, p.project_type, p.start_date, p.deadline,
               p.client_id, p.created_date, p.created_by, p.status, p.status_id,
               p.price, c.company_name AS client_name,
-              COUNT(t.id) AS total_tasks,
-              SUM(CASE WHEN t.status = 'done' OR t.status_id IN (3, 4) THEN 1 ELSE 0 END) AS completed_tasks
+              ps.title AS status_title,
+              COUNT(DISTINCT t.id) AS total_tasks,
+              COUNT(DISTINCT CASE WHEN t.status = 'done' OR t.status_id IN (3, 4) THEN t.id END) AS completed_tasks
        FROM ${table('projects')} p
        LEFT JOIN ${table('clients')} c ON c.id = p.client_id
+       LEFT JOIN ${table('project_status')} ps ON ps.id = p.status_id
        LEFT JOIN ${table('tasks')} t ON t.project_id = p.id AND t.deleted = 0
        WHERE p.id = ? AND p.deleted = 0
        GROUP BY p.id`,
@@ -80,12 +116,24 @@ export class ProjectService {
     const project = projectRows[0];
 
     if (!isAdmin) {
-      const [memberCheck] = await pool.query<RowDataPacket[]>(
-        `SELECT id FROM ${table('project_members')}
-         WHERE project_id = ? AND user_id = ? AND deleted = 0`,
-        [projectId, userId]
+      const [accessCheck] = await pool.query<RowDataPacket[]>(
+        `SELECT 1 AS has_access FROM DUAL WHERE
+          EXISTS (
+            SELECT 1 FROM ${table('project_members')} pm
+            WHERE pm.project_id = ? AND pm.user_id = ? AND pm.deleted = 0
+          )
+          OR EXISTS (
+            SELECT 1 FROM ${table('tasks')} t
+            WHERE t.project_id = ? AND t.deleted = 0
+              AND (t.assigned_to = ? OR FIND_IN_SET(?, REPLACE(t.collaborators, ' ', '')))
+          )
+          OR EXISTS (
+            SELECT 1 FROM ${table('users')} u
+            WHERE u.id = ? AND u.deleted = 0 AND u.client_id > 0 AND u.client_id = ?
+          )`,
+        [projectId, userId, projectId, userId, String(userId), userId, project.client_id || 0]
       );
-      if (memberCheck.length === 0 && project.created_by !== userId) {
+      if (accessCheck.length === 0 && project.created_by !== userId) {
         throw new Error('Anda tidak memiliki akses ke project ini');
       }
     }
@@ -100,7 +148,7 @@ export class ProjectService {
       [projectId]
     );
 
-    // Get milestones (include active or historical milestones for visibility)
+    // Get milestones
     const [milestones] = await pool.query<RowDataPacket[]>(
       `SELECT id, title, due_date, description, deleted
        FROM ${table('milestones')}
@@ -147,14 +195,31 @@ export class ProjectService {
     const completedTasks = Number(project.completed_tasks) || 0;
     const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
+    const resolvedStatus =
+      project.status_id === 2
+        ? 'completed'
+        : project.status_id === 3
+        ? 'hold'
+        : project.status_id === 4
+        ? 'canceled'
+        : project.status || 'open';
+
     return {
       id: project.id,
       title: project.title,
       description: stripHtml(project.description),
       project_type: project.project_type,
-      start_date: project.start_date,
-      deadline: project.deadline,
-      status: project.status,
+      start_date:
+        project.start_date && !String(project.start_date).startsWith('0000')
+          ? project.start_date
+          : null,
+      deadline:
+        project.deadline && !String(project.deadline).startsWith('0000')
+          ? project.deadline
+          : null,
+      status: resolvedStatus,
+      status_id: project.status_id,
+      status_title: project.status_title || resolvedStatus,
       price: project.price,
       client_name: project.client_name || 'Internal',
       total_tasks: totalTasks,

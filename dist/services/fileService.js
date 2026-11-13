@@ -5,9 +5,10 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { cleanCiFileName, isImageFileName, resolveCiFile, stripHtml, toIsoUtc, } from '../utils/ciHelpers.js';
 import { googleDriveService } from './googleDriveService.js';
+import { settingsService } from './settingsService.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const baseUploadDir = path.resolve(__dirname, '../../../paas/files');
+const fallbackUploadDir = path.resolve(__dirname, '../../../paas/files');
 export class FileService {
     formatFileRecord(r, type) {
         const folderPath = type === 'project'
@@ -282,6 +283,7 @@ export class FileService {
         const driveResult = await googleDriveService.uploadFile(file.path, file.filename, file.mimetype, folderType);
         const fileId = driveResult?.file_id || null;
         const serviceType = driveResult?.service_type || null;
+        const uploadDocPath = await settingsService.getUploadDocPath();
         if (projectId) {
             const [result] = await pool.query(`INSERT INTO ${table('project_files')}
          (file_name, file_id, service_type, file_size, description, project_id, uploaded_by, folder_id, category_id, created_at, deleted)
@@ -296,37 +298,45 @@ export class FileService {
                 folderId,
                 categoryId,
             ]);
-            return this.formatFileRecord({
-                id: result.insertId,
-                file_name: file.filename,
-                file_id: fileId,
-                service_type: serviceType,
-                file_size: file.size,
-                description: description || '',
-                project_id: projectId,
-                folder_id: folderId,
-                category_id: categoryId,
-                uploaded_by: userId,
-                created_at: new Date().toISOString(),
-            }, 'project');
+            return {
+                ...this.formatFileRecord({
+                    id: result.insertId,
+                    file_name: file.filename,
+                    file_id: fileId,
+                    service_type: serviceType,
+                    file_size: file.size,
+                    description: description || '',
+                    project_id: projectId,
+                    folder_id: folderId,
+                    category_id: categoryId,
+                    uploaded_by: userId,
+                    created_at: new Date().toISOString(),
+                }, 'project'),
+                upload_doc_path: uploadDocPath,
+                storage_path: file.path,
+            };
         }
         else {
             const [result] = await pool.query(`INSERT INTO ${table('general_files')}
          (file_name, file_id, service_type, file_size, description, context, user_id, uploaded_by, folder_id, created_at, deleted)
          VALUES (?, ?, ?, ?, ?, 'global_files', 0, ?, ?, UTC_TIMESTAMP(), 0)`, [file.filename, fileId, serviceType, file.size, description || '', userId, folderId]);
-            return this.formatFileRecord({
-                id: result.insertId,
-                file_name: file.filename,
-                file_id: fileId,
-                service_type: serviceType,
-                file_size: file.size,
-                description: description || '',
-                project_id: null,
-                folder_id: folderId,
-                category_id: 0,
-                uploaded_by: userId,
-                created_at: new Date().toISOString(),
-            }, 'general');
+            return {
+                ...this.formatFileRecord({
+                    id: result.insertId,
+                    file_name: file.filename,
+                    file_id: fileId,
+                    service_type: serviceType,
+                    file_size: file.size,
+                    description: description || '',
+                    project_id: null,
+                    folder_id: folderId,
+                    category_id: 0,
+                    uploaded_by: userId,
+                    created_at: new Date().toISOString(),
+                }, 'general'),
+                upload_doc_path: uploadDocPath,
+                storage_path: file.path,
+            };
         }
     }
     async moveFileToFolder(fileId, type, folderId) {
@@ -340,6 +350,8 @@ export class FileService {
         return { id: fileId, type, deleted: true };
     }
     async getFileDownloadTarget(fileId, type = 'project') {
+        const dynamicBaseDir = await settingsService.getResolvedUploadBaseDir();
+        const baseDirs = Array.from(new Set([dynamicBaseDir, fallbackUploadDir]));
         if (type === 'project') {
             const [rows] = await pool.query(`SELECT file_name, file_id, service_type, project_id
          FROM ${table('project_files')}
@@ -354,11 +366,10 @@ export class FileService {
                     fileName: cleanCiFileName(file_name),
                 };
             }
-            const candidatePaths = [
-                path.join(baseUploadDir, 'project_files', String(project_id), file_name),
-                path.join(baseUploadDir, 'project_files', file_name),
-                path.join(baseUploadDir, 'general', file_name),
-            ];
+            const candidatePaths = [];
+            for (const dir of baseDirs) {
+                candidatePaths.push(path.join(dir, 'project_files', String(project_id), file_name), path.join(dir, 'project_files', file_name), path.join(dir, 'general', file_name), path.join(dir, file_name));
+            }
             const existingPath = candidatePaths.find((p) => fs.existsSync(p)) || candidatePaths[0];
             return {
                 redirectUrl: null,
@@ -380,11 +391,10 @@ export class FileService {
                     fileName: cleanCiFileName(file_name),
                 };
             }
-            const candidatePaths = [
-                path.join(baseUploadDir, 'general', file_name),
-                path.join(baseUploadDir, 'timeline_files', file_name),
-                path.join(baseUploadDir, 'system', file_name),
-            ];
+            const candidatePaths = [];
+            for (const dir of baseDirs) {
+                candidatePaths.push(path.join(dir, 'general', file_name), path.join(dir, 'timeline_files', file_name), path.join(dir, 'system', file_name), path.join(dir, file_name));
+            }
             const existingPath = candidatePaths.find((p) => fs.existsSync(p)) || candidatePaths[0];
             return {
                 redirectUrl: null,

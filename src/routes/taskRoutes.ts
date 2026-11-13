@@ -12,7 +12,9 @@ router.get('/', (req, res) => taskController.getTasks(req, res));
 router.get('/:id', (req, res) => taskController.getTaskById(req, res));
 router.patch('/:id/status', (req, res) => taskController.updateStatus(req, res));
 router.post('/:id/checklist', (req, res) => taskController.addChecklistItem(req, res));
+router.post('/:id/checklists', (req, res) => taskController.addChecklistItem(req, res));
 router.patch('/checklist/:itemId/toggle', (req, res) => taskController.toggleChecklistItem(req, res));
+router.patch('/checklists/:itemId/toggle', (req, res) => taskController.toggleChecklistItem(req, res));
 router.post('/:id/comments', (req, res) => taskController.addComment(req, res));
 
 export default router;

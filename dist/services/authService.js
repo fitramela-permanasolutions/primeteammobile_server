@@ -2,13 +2,16 @@ import { pool, table } from '../config/database.js';
 import { verifyPassword, hashPassword } from '../utils/password.js';
 import { generateToken } from '../config/jwt.js';
 import { resolveCiFile, toIsoUtc } from '../utils/ciHelpers.js';
+import { isAdminOrSuperAdmin, resolveUserRoleTitle } from '../utils/rbac.js';
 export class AuthService {
     async login(email, plainPassword) {
         const cleanEmail = email.trim().toLowerCase();
-        const [rows] = await pool.query(`SELECT id, first_name, last_name, user_type, is_admin, role_id, email, password,
-              image, status, client_id, job_title, disable_login, phone, address
-       FROM ${table('users')}
-       WHERE email = ? AND deleted = 0 AND disable_login = 0 AND status = 'active'
+        const [rows] = await pool.query(`SELECT u.id, u.first_name, u.last_name, u.user_type, u.is_admin, u.role_id, u.email, u.password,
+              u.image, u.status, u.client_id, u.job_title, u.disable_login, u.phone, u.address,
+              r.title AS role_title
+       FROM ${table('users')} u
+       LEFT JOIN ${table('roles')} r ON r.id = u.role_id AND r.deleted = 0
+       WHERE u.email = ? AND u.deleted = 0 AND u.disable_login = 0 AND u.status = 'active'
        LIMIT 1`, [cleanEmail]);
         if (rows.length === 0) {
             throw new Error('Invalid email or password');
@@ -41,11 +44,24 @@ export class AuthService {
                 // Ignore if auto_attendance_settings table is absent
             }
         }
+        const roleTitle = resolveUserRoleTitle(user);
+        const hasAdminAccess = isAdminOrSuperAdmin({
+            is_admin: user.is_admin,
+            role_id: user.role_id,
+            role_title: roleTitle,
+            user_type: user.user_type,
+            job_title: user.job_title,
+        });
         const tokenPayload = {
             id: user.id,
             email: user.email,
             user_type: user.user_type,
-            is_admin: user.is_admin,
+            is_admin: hasAdminAccess ? 1 : 0,
+            role_id: user.role_id,
+            role_title: roleTitle,
+            role: roleTitle,
+            job_title: user.job_title,
+            client_id: user.client_id,
             first_name: user.first_name,
             last_name: user.last_name,
         };
@@ -59,7 +75,11 @@ export class AuthService {
                 last_name: user.last_name,
                 email: user.email,
                 user_type: user.user_type,
-                is_admin: Boolean(user.is_admin),
+                is_admin: hasAdminAccess,
+                role_id: user.role_id,
+                role_title: roleTitle,
+                role: roleTitle,
+                client_id: user.client_id,
                 job_title: user.job_title,
                 image: resolvedAvatar?.thumbnailUrl || null,
                 phone: user.phone,
@@ -71,9 +91,9 @@ export class AuthService {
         const [rows] = await pool.query(`SELECT u.id, u.first_name, u.last_name, u.user_type, u.is_admin, u.role_id,
               u.email, u.image, u.status, u.client_id, u.job_title, u.phone, u.address,
               u.dob, u.gender, u.language, u.created_at, u.last_online,
-              r.title as role_title
+              r.title AS role_title
        FROM ${table('users')} u
-       LEFT JOIN ${table('roles')} r ON r.id = u.role_id
+       LEFT JOIN ${table('roles')} r ON r.id = u.role_id AND r.deleted = 0
        WHERE u.id = ? AND u.deleted = 0
        LIMIT 1`, [userId]);
         if (rows.length === 0) {
@@ -81,16 +101,26 @@ export class AuthService {
         }
         const user = rows[0];
         const resolvedAvatar = resolveCiFile(user.image, 'profile_images');
+        const roleTitle = resolveUserRoleTitle(user);
+        const hasAdminAccess = isAdminOrSuperAdmin({
+            is_admin: user.is_admin,
+            role_id: user.role_id,
+            role_title: roleTitle,
+            user_type: user.user_type,
+            job_title: user.job_title,
+        });
         return {
             id: user.id,
             first_name: user.first_name,
             last_name: user.last_name,
             email: user.email,
             user_type: user.user_type,
-            is_admin: Boolean(user.is_admin),
+            is_admin: hasAdminAccess,
             job_title: user.job_title,
             role_id: user.role_id,
-            role_title: user.role_title || (user.is_admin ? 'Admin' : 'Staff Member'),
+            role_title: roleTitle,
+            role: roleTitle,
+            client_id: user.client_id,
             image: resolvedAvatar?.thumbnailUrl || null,
             phone: user.phone,
             address: user.address,

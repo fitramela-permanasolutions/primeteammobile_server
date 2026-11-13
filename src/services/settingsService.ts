@@ -1,6 +1,15 @@
 import { pool, table } from '../config/database.js';
 import { RowDataPacket } from 'mysql2';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import { parsePhpSerializedArray, resolveCiFile } from '../utils/ciHelpers.js';
+import { googleDriveService } from './googleDriveService.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const serverRootDir = path.resolve(__dirname, '../..');
+const defaultUploadDocPath = process.env.UPLOAD_DIR || '../paas/files';
 
 export const PAAS_THEME_PALETTE = [
   { code: 'F2F2F2', hex: '#00628d', name: 'Default (Indodefence Blue)' },
@@ -67,6 +76,7 @@ export class SettingsService {
       'module_expense',
       'module_invoice',
       'plugins',
+      'upload_doc_path',
     ];
 
     const placeholders = keys.map(() => '?').join(', ');
@@ -153,6 +163,7 @@ export class SettingsService {
     const pwaIcon = resolveCiFile(map.pwa_icon, 'system', false);
 
     const parsedPlugins = parsePhpSerializedArray(map.plugins || '') || {};
+    const uploadDocPath = (map.upload_doc_path || defaultUploadDocPath).trim();
 
     return {
       app_title: map.app_title || 'Indodefence ( IDD )',
@@ -167,6 +178,7 @@ export class SettingsService {
       show_background_image_in_signin_page: map.show_background_image_in_signin_page === 'yes',
       show_logo_in_signin_page: map.show_logo_in_signin_page !== 'no',
       show_theme_color_changer: map.show_theme_color_changer !== 'no',
+      upload_doc_path: uploadDocPath,
       timezone: map.timezone || 'Asia/Jakarta',
       date_format: map.date_format || 'd-m-Y',
       time_format: map.time_format || '24_hours',
@@ -212,10 +224,101 @@ export class SettingsService {
     };
   }
 
+  async getUploadDocPath(): Promise<string> {
+    try {
+      const [rows] = await pool.query<RowDataPacket[]>(
+        `SELECT setting_value FROM ${table('settings')} WHERE setting_name = 'upload_doc_path' AND deleted = 0 LIMIT 1`
+      );
+      if (rows.length > 0 && rows[0].setting_value && String(rows[0].setting_value).trim()) {
+        return String(rows[0].setting_value).trim();
+      }
+    } catch {
+      // Fallback to default on DB error
+    }
+    return defaultUploadDocPath;
+  }
+
+  async getResolvedUploadBaseDir(): Promise<string> {
+    const configuredPath = await this.getUploadDocPath();
+    const resolved = path.isAbsolute(configuredPath)
+      ? configuredPath
+      : path.resolve(serverRootDir, configuredPath);
+    try {
+      if (!fs.existsSync(resolved)) {
+        fs.mkdirSync(resolved, { recursive: true });
+      }
+    } catch {
+      // Fallback to default paas/files if configured path cannot be created
+      const fallback = path.resolve(serverRootDir, '../paas/files');
+      if (!fs.existsSync(fallback)) {
+        fs.mkdirSync(fallback, { recursive: true });
+      }
+      return fallback;
+    }
+    return resolved;
+  }
+
+  private async upsertSetting(name: string, value: string): Promise<void> {
+    await pool.query(
+      `INSERT INTO ${table('settings')} (setting_name, setting_value, type, deleted)
+       VALUES (?, ?, 'app', 0)
+       ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), deleted = 0`,
+      [name, value]
+    );
+  }
+
+  private buildPhpSerializedFile(fileName: string, fileId?: string | null, serviceType?: string | null): string {
+    const fn = fileName || '';
+    const fid = fileId || '';
+    const st = serviceType || '';
+    if (st === 'google' && fid) {
+      return `a:3:{s:9:"file_name";s:${Buffer.byteLength(fn)}:"${fn}";s:7:"file_id";s:${Buffer.byteLength(fid)}:"${fid}";s:12:"service_type";s:6:"google";}`;
+    }
+    return `a:1:{s:9:"file_name";s:${Buffer.byteLength(fn)}:"${fn}";}`;
+  }
+
+  async uploadSiteLogo(file: Express.Multer.File) {
+    const driveRes = await googleDriveService.uploadFile(
+      file.path,
+      file.filename,
+      file.mimetype,
+      'system'
+    );
+    const serialized = this.buildPhpSerializedFile(
+      file.filename,
+      driveRes?.file_id || null,
+      driveRes?.service_type || null
+    );
+    await this.upsertSetting('site_logo', serialized);
+    await this.upsertSetting('show_logo_in_signin_page', 'yes');
+    return this.getPlatformSettings();
+  }
+
+  async uploadSigninBackground(file: Express.Multer.File) {
+    const driveRes = await googleDriveService.uploadFile(
+      file.path,
+      file.filename,
+      file.mimetype,
+      'system'
+    );
+    const serialized = this.buildPhpSerializedFile(
+      file.filename,
+      driveRes?.file_id || null,
+      driveRes?.service_type || null
+    );
+    await this.upsertSetting('signin_page_background', serialized);
+    await this.upsertSetting('show_background_image_in_signin_page', 'yes');
+    return this.getPlatformSettings();
+  }
+
   async updatePlatformSettings(input: {
     default_theme_color?: string;
     pwa_theme_color?: string;
     app_title?: string;
+    footer_copyright_text?: string;
+    upload_doc_path?: string;
+    show_logo_in_signin_page?: boolean | string;
+    show_background_image_in_signin_page?: boolean | string;
   }) {
     const updates: Array<[string, string]> = [];
 
@@ -229,17 +332,45 @@ export class SettingsService {
         : `#${input.pwa_theme_color}`;
       updates.push(['pwa_theme_color', cleanHex]);
     }
-    if (input.app_title && input.app_title.trim()) {
+    if (input.app_title !== undefined && input.app_title.trim()) {
       updates.push(['app_title', input.app_title.trim()]);
+    }
+    if (input.footer_copyright_text !== undefined) {
+      updates.push(['footer_copyright_text', input.footer_copyright_text.trim()]);
+    }
+    if (input.upload_doc_path !== undefined && input.upload_doc_path.trim()) {
+      const cleanPath = input.upload_doc_path.trim();
+      updates.push(['upload_doc_path', cleanPath]);
+      // Ensure the target directory exists right away
+      const resolved = path.isAbsolute(cleanPath)
+        ? cleanPath
+        : path.resolve(serverRootDir, cleanPath);
+      try {
+        if (!fs.existsSync(resolved)) {
+          fs.mkdirSync(resolved, { recursive: true });
+        }
+      } catch (err: any) {
+        throw new Error(`Gagal membuat direktori penyimpanan '${cleanPath}': ${err.message}`);
+      }
+    }
+    if (input.show_logo_in_signin_page !== undefined) {
+      const val =
+        input.show_logo_in_signin_page === true || input.show_logo_in_signin_page === 'yes'
+          ? 'yes'
+          : 'no';
+      updates.push(['show_logo_in_signin_page', val]);
+    }
+    if (input.show_background_image_in_signin_page !== undefined) {
+      const val =
+        input.show_background_image_in_signin_page === true ||
+        input.show_background_image_in_signin_page === 'yes'
+          ? 'yes'
+          : 'no';
+      updates.push(['show_background_image_in_signin_page', val]);
     }
 
     for (const [name, value] of updates) {
-      await pool.query(
-        `INSERT INTO ${table('settings')} (setting_name, setting_value, type, deleted)
-         VALUES (?, ?, 'app', 0)
-         ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), deleted = 0`,
-        [name, value]
-      );
+      await this.upsertSetting(name, value);
     }
 
     return this.getPlatformSettings();

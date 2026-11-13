@@ -1,5 +1,6 @@
 import { projectService } from '../services/projectService.js';
 import { sendSuccess, sendError } from '../utils/response.js';
+import { isAdminOrSuperAdmin } from '../utils/rbac.js';
 export class ProjectController {
     async getProjects(req, res) {
         try {
@@ -8,8 +9,9 @@ export class ProjectController {
                 return;
             }
             const status = req.query.status;
-            const isAdmin = Boolean(req.user.is_admin);
-            const projects = await projectService.getProjects(req.user.id, isAdmin, status);
+            const isAdmin = isAdminOrSuperAdmin(req.user);
+            const onlyMyProjects = req.query.allProjects === 'true' && isAdmin ? false : true;
+            const projects = await projectService.getProjects(req.user.id, isAdmin, status, onlyMyProjects);
             sendSuccess(res, projects, 'Projects retrieved');
         }
         catch (error) {
@@ -27,7 +29,7 @@ export class ProjectController {
                 sendError(res, 'Invalid project ID', 400);
                 return;
             }
-            const isAdmin = Boolean(req.user.is_admin);
+            const isAdmin = isAdminOrSuperAdmin(req.user);
             const project = await projectService.getProjectById(projectId, req.user.id, isAdmin);
             sendSuccess(res, project, 'Project retrieved');
         }

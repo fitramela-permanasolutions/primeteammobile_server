@@ -137,9 +137,13 @@ export class FileController {
         return;
       }
 
-      const projectId = req.body.project_id ? parseInt(req.body.project_id, 10) : undefined;
-      const folderId = req.body.folder_id ? parseInt(req.body.folder_id, 10) : 0;
-      const categoryId = req.body.category_id ? parseInt(req.body.category_id, 10) : 0;
+      const rawProjectId = req.body.project_id ?? req.body.projectId;
+      const rawFolderId = req.body.folder_id ?? req.body.folderId;
+      const rawCategoryId = req.body.category_id ?? req.body.categoryId;
+
+      const projectId = rawProjectId ? parseInt(String(rawProjectId), 10) : undefined;
+      const folderId = rawFolderId ? parseInt(String(rawFolderId), 10) : 0;
+      const categoryId = rawCategoryId ? parseInt(String(rawCategoryId), 10) : 0;
       const description = req.body.description as string;
 
       const saved = await fileService.saveUploadedFile(

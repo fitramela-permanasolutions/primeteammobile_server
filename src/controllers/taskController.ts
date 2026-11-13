@@ -33,6 +33,7 @@ export class TaskController {
       const statusId = req.query.statusId ? parseInt(req.query.statusId as string, 10) : undefined;
       const assignedTo = req.query.assignedTo ? parseInt(req.query.assignedTo as string, 10) : undefined;
       const onlyMyTasks = req.query.onlyMyTasks === 'true' || req.query.my === '1';
+      const activeOnly = req.query.activeOnly === 'true' || req.query.active === '1';
 
       const isAdmin = Boolean(req.user.is_admin);
       const tasks = await taskService.getTasks(req.user.id, isAdmin, {
@@ -40,6 +41,7 @@ export class TaskController {
         statusId,
         assignedTo,
         onlyMyTasks,
+        activeOnly,
       });
 
       sendSuccess(res, tasks, 'Tasks retrieved');
