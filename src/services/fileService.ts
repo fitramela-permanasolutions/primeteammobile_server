@@ -25,7 +25,7 @@ export class FileService {
         ? r.project_id
           ? `project_files/${r.project_id}`
           : 'project_files'
-        : 'general';
+        : 'general/global_files/all';
 
     const resolved = resolveCiFile(
       {
@@ -507,6 +507,7 @@ export class FileService {
         candidatePaths.push(
           path.join(dir, 'project_files', String(project_id), file_name),
           path.join(dir, 'project_files', file_name),
+          path.join(dir, 'general', 'global_files', 'all', file_name),
           path.join(dir, 'general', file_name),
           path.join(dir, file_name)
         );
@@ -538,6 +539,7 @@ export class FileService {
       const candidatePaths: string[] = [];
       for (const dir of baseDirs) {
         candidatePaths.push(
+          path.join(dir, 'general', 'global_files', 'all', file_name),
           path.join(dir, 'general', file_name),
           path.join(dir, 'timeline_files', file_name),
           path.join(dir, 'system', file_name),
@@ -550,6 +552,40 @@ export class FileService {
         filePath: existingPath,
         fileName: cleanCiFileName(file_name),
       };
+    }
+  }
+
+  /**
+   * Ensures backward compatibility: if files were uploaded directly to files/general/
+   * this syncs/copies them to files/general/global_files/all/ so CodeIgniter web app can find them.
+   */
+  async syncLegacyGeneralFiles() {
+    try {
+      const baseDir = await settingsService.getResolvedUploadBaseDir();
+      const legacyGeneralDir = path.join(baseDir, 'general');
+      const ciGeneralDir = path.join(baseDir, 'general', 'global_files', 'all');
+
+      if (!fs.existsSync(legacyGeneralDir)) return;
+      if (!fs.existsSync(ciGeneralDir)) {
+        fs.mkdirSync(ciGeneralDir, { recursive: true });
+      }
+
+      const entries = fs.readdirSync(legacyGeneralDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isFile() && entry.name.startsWith('_file')) {
+          const srcFile = path.join(legacyGeneralDir, entry.name);
+          const destFile = path.join(ciGeneralDir, entry.name);
+          if (!fs.existsSync(destFile)) {
+            try {
+              fs.copyFileSync(srcFile, destFile);
+            } catch {
+              // ignore copy error
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore
     }
   }
 }

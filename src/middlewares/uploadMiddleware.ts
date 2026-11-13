@@ -12,7 +12,7 @@ const storage = multer.diskStorage({
         req.originalUrl?.includes('/settings/upload-logo') ||
         req.originalUrl?.includes('/settings/upload-background');
 
-      let targetDir = path.join(baseUploadDir, 'general');
+      let targetDir = path.join(baseUploadDir, 'general', 'global_files', 'all');
       if (isSystemUpload) {
         targetDir = path.join(baseUploadDir, 'system');
       } else if (projectId) {

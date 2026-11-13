@@ -8,6 +8,7 @@ import routes from './routes/index.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { debugMiddleware } from './middlewares/debugMiddleware.js';
 import { settingsService } from './services/settingsService.js';
+import { fileService } from './services/fileService.js';
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,15 +26,20 @@ app.use('/files-static', async (req, res, next) => {
     try {
         const dynamicDir = await settingsService.getResolvedUploadBaseDir();
         const relPath = decodeURIComponent(req.path).replace(/^\/+/, '');
-        const dynamicCandidate = path.join(dynamicDir, relPath);
-        if (fs.existsSync(dynamicCandidate) && fs.statSync(dynamicCandidate).isFile()) {
-            res.sendFile(dynamicCandidate);
-            return;
-        }
-        const fallbackCandidate = path.join(fallbackFilesDir, relPath);
-        if (fs.existsSync(fallbackCandidate) && fs.statSync(fallbackCandidate).isFile()) {
-            res.sendFile(fallbackCandidate);
-            return;
+        const filename = path.basename(relPath);
+        const candidates = [
+            path.join(dynamicDir, relPath),
+            path.join(fallbackFilesDir, relPath),
+            path.join(dynamicDir, 'general', 'global_files', 'all', filename),
+            path.join(dynamicDir, 'general', filename),
+            path.join(fallbackFilesDir, 'general', 'global_files', 'all', filename),
+            path.join(fallbackFilesDir, 'general', filename),
+        ];
+        for (const candidate of candidates) {
+            if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+                res.sendFile(candidate);
+                return;
+            }
         }
         next();
     }
@@ -74,5 +80,7 @@ app.listen(port, () => {
     if (process.env.DEBUG === '1') {
         console.log(`[PrimeTeam API] 🐞 DEBUG Mode ACTIVE (Logging API endpoints & response bodies)`);
     }
+    // Sync legacy general files if any exist directly in files/general to files/general/global_files/all
+    fileService.syncLegacyGeneralFiles().catch(() => { });
 });
 export default app;

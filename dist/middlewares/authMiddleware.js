@@ -5,13 +5,18 @@ import { isAdminOrSuperAdmin, resolveUserRoleTitle } from '../utils/rbac.js';
 export async function authMiddleware(req, res, next) {
     try {
         const authHeader = req.headers.authorization;
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            sendError(res, 'Authentication token missing or invalid', 401);
-            return;
+        let token = '';
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            token = authHeader.split(' ')[1];
         }
-        const token = authHeader.split(' ')[1];
+        else if (req.query.token && typeof req.query.token === 'string') {
+            token = req.query.token;
+        }
+        else if (req.query.auth_token && typeof req.query.auth_token === 'string') {
+            token = req.query.auth_token;
+        }
         if (!token) {
-            sendError(res, 'Authentication token missing', 401);
+            sendError(res, 'Authentication token missing or invalid', 401);
             return;
         }
         const payload = verifyToken(token);
