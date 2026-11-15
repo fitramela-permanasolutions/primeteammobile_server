@@ -5,6 +5,9 @@ import { upload } from '../middlewares/uploadMiddleware.js';
 
 const router = Router();
 
+// Direct download & inline preview endpoint (placed before authMiddleware so browsers & image viewers never hit 401 JSON)
+router.get('/:id/download', (req, res) => fileController.downloadFile(req, res));
+
 router.use(authMiddleware);
 
 router.get('/', (req, res) => fileController.getFiles(req, res));
@@ -16,6 +19,5 @@ router.get('/categories', (req, res) => fileController.getCategories(req, res));
 router.post('/upload', upload.single('file'), (req, res) => fileController.uploadFile(req, res));
 router.patch('/:id/move', (req, res) => fileController.moveFile(req, res));
 router.delete('/:id', (req, res) => fileController.deleteFile(req, res));
-router.get('/:id/download', (req, res) => fileController.downloadFile(req, res));
 
 export default router;

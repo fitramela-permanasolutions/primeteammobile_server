@@ -210,17 +210,26 @@ export class SettingsService {
     }
     async getResolvedUploadBaseDir() {
         const configuredPath = await this.getUploadDocPath();
-        const resolved = path.isAbsolute(configuredPath)
-            ? configuredPath
-            : path.resolve(serverRootDir, configuredPath);
+        const envUploadDir = process.env.UPLOAD_DIR ? process.env.UPLOAD_DIR.trim() : '';
+        // If Docker/server env defines UPLOAD_DIR (e.g., /var/www/html/files) and DB holds default relative path,
+        // prefer env UPLOAD_DIR so shared container volumes stay synchronized with CodeIgniter web app.
+        const isDefaultRelative = configuredPath === '../paas/files' ||
+            configuredPath === './files' ||
+            configuredPath === 'files' ||
+            configuredPath === '../paas/files/' ||
+            configuredPath === './files/';
+        const effectivePath = envUploadDir && isDefaultRelative ? envUploadDir : configuredPath;
+        const resolved = path.isAbsolute(effectivePath)
+            ? effectivePath
+            : path.resolve(serverRootDir, effectivePath);
         try {
             if (!fs.existsSync(resolved)) {
                 fs.mkdirSync(resolved, { recursive: true });
             }
         }
         catch {
-            // Fallback to default paas/files if configured path cannot be created
-            const fallback = path.resolve(serverRootDir, '../paas/files');
+            // Fallback to UPLOAD_DIR or default paas/files if configured path cannot be created
+            const fallback = envUploadDir || path.resolve(serverRootDir, '../paas/files');
             if (!fs.existsSync(fallback)) {
                 fs.mkdirSync(fallback, { recursive: true });
             }

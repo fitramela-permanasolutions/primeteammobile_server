@@ -284,6 +284,24 @@ export class FileService {
         const fileId = driveResult?.file_id || null;
         const serviceType = driveResult?.service_type || null;
         const uploadDocPath = await settingsService.getUploadDocPath();
+        // Sync to Docker shared volume root (/var/www/html/files) if present and file wasn't written directly into it
+        const sharedDockerRoot = '/var/www/html/files';
+        try {
+            if (fs.existsSync(sharedDockerRoot) &&
+                !path.resolve(file.path).startsWith(path.resolve(sharedDockerRoot))) {
+                const subFolder = projectId
+                    ? path.join('project_files', String(projectId))
+                    : path.join('general', 'global_files', 'all');
+                const syncDestDir = path.join(sharedDockerRoot, subFolder);
+                if (!fs.existsSync(syncDestDir)) {
+                    fs.mkdirSync(syncDestDir, { recursive: true });
+                }
+                fs.copyFileSync(file.path, path.join(syncDestDir, file.filename));
+            }
+        }
+        catch {
+            // ignore cross-sync error
+        }
         if (projectId) {
             const [result] = await pool.query(`INSERT INTO ${table('project_files')}
          (file_name, file_id, service_type, file_size, description, project_id, uploaded_by, folder_id, category_id, created_at, deleted)
@@ -351,7 +369,8 @@ export class FileService {
     }
     async getFileDownloadTarget(fileId, type = 'project') {
         const dynamicBaseDir = await settingsService.getResolvedUploadBaseDir();
-        const baseDirs = Array.from(new Set([dynamicBaseDir, fallbackUploadDir]));
+        const envUploadDir = process.env.UPLOAD_DIR ? process.env.UPLOAD_DIR.trim() : '';
+        const baseDirs = Array.from(new Set([dynamicBaseDir, envUploadDir, '/var/www/html/files', fallbackUploadDir].filter(Boolean)));
         if (type === 'project') {
             const [rows] = await pool.query(`SELECT file_name, file_id, service_type, project_id
          FROM ${table('project_files')}
@@ -378,12 +397,12 @@ export class FileService {
             };
         }
         else {
-            const [rows] = await pool.query(`SELECT file_name, file_id, service_type
+            const [rows] = await pool.query(`SELECT file_name, file_id, service_type, context, client_id, user_id
          FROM ${table('general_files')}
          WHERE id = ? AND deleted = 0`, [fileId]);
             if (rows.length === 0)
                 throw new Error('File tidak ditemukan');
-            const { file_name, file_id, service_type } = rows[0];
+            const { file_name, file_id, service_type, context, client_id, user_id } = rows[0];
             if (service_type === 'google' && file_id) {
                 return {
                     redirectUrl: `https://drive.google.com/uc?export=download&id=${file_id}`,
@@ -391,9 +410,11 @@ export class FileService {
                     fileName: cleanCiFileName(file_name),
                 };
             }
+            const ctx = context || 'global_files';
+            const ctxId = String(client_id || user_id || 'all');
             const candidatePaths = [];
             for (const dir of baseDirs) {
-                candidatePaths.push(path.join(dir, 'general', 'global_files', 'all', file_name), path.join(dir, 'general', file_name), path.join(dir, 'timeline_files', file_name), path.join(dir, 'system', file_name), path.join(dir, file_name));
+                candidatePaths.push(path.join(dir, 'general', 'global_files', 'all', file_name), path.join(dir, 'general', ctx, ctxId, file_name), path.join(dir, 'general', 'client', String(client_id || 0), file_name), path.join(dir, 'general', 'team_member', String(user_id || 0), file_name), path.join(dir, 'general', file_name), path.join(dir, 'project_files', file_name), path.join(dir, 'timeline_files', file_name), path.join(dir, 'system', file_name), path.join(dir, file_name));
             }
             const existingPath = candidatePaths.find((p) => fs.existsSync(p)) || candidatePaths[0];
             return {

@@ -31,17 +31,22 @@ const fallbackFilesDir = path.resolve(__dirname, '../../paas/files');
 app.use('/files-static', async (req, res, next) => {
   try {
     const dynamicDir = await settingsService.getResolvedUploadBaseDir();
+    const envUploadDir = process.env.UPLOAD_DIR ? process.env.UPLOAD_DIR.trim() : '';
     const relPath = decodeURIComponent(req.path).replace(/^\/+/, '');
     const filename = path.basename(relPath);
 
-    const candidates = [
-      path.join(dynamicDir, relPath),
-      path.join(fallbackFilesDir, relPath),
-      path.join(dynamicDir, 'general', 'global_files', 'all', filename),
-      path.join(dynamicDir, 'general', filename),
-      path.join(fallbackFilesDir, 'general', 'global_files', 'all', filename),
-      path.join(fallbackFilesDir, 'general', filename),
-    ];
+    const baseRoots = Array.from(
+      new Set([dynamicDir, envUploadDir, '/var/www/html/files', fallbackFilesDir].filter(Boolean))
+    );
+
+    const candidates: string[] = [];
+    for (const root of baseRoots) {
+      candidates.push(
+        path.join(root, relPath),
+        path.join(root, 'general', 'global_files', 'all', filename),
+        path.join(root, 'general', filename)
+      );
+    }
 
     for (const candidate of candidates) {
       if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {

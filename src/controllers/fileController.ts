@@ -182,17 +182,69 @@ export class FileController {
     }
   }
 
+  private renderDownloadErrorHtml(res: Response, message: string, status = 404): void {
+    const safeMsg = String(message || 'Berkas tidak ditemukan di penyimpanan server')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    res.status(status).type('html').send(`<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Berkas Tidak Ditemukan</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8fafc; color: #0f172a; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; box-sizing: border-box; }
+    .card { max-width: 420px; width: 100%; background: #ffffff; border-radius: 16px; padding: 28px 24px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08); text-align: center; border: 1px solid #e2e8f0; }
+    .icon { width: 56px; height: 56px; border-radius: 16px; background: #fef2f2; color: #ef4444; display: inline-flex; align-items: center; justify-content: center; font-size: 28px; margin-bottom: 16px; }
+    h1 { font-size: 18px; margin: 0 0 8px; color: #0f172a; }
+    p { font-size: 14px; color: #64748b; line-height: 1.5; margin: 0 0 22px; }
+    button { background: #00628d; color: #ffffff; border: none; border-radius: 10px; padding: 12px 20px; font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">&#128196;</div>
+    <h1>Berkas Tidak Tersedia</h1>
+    <p>${safeMsg}</p>
+    <button onclick="window.close(); history.back();">Kembali ke Aplikasi</button>
+  </div>
+</body>
+</html>`);
+  }
+
   async downloadFile(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const isCheck = req.query.check === '1' || req.query.check === 'true';
+    const isInline = req.query.inline === '1' || req.query.inline === 'true';
+
     try {
       const fileId = parseInt(req.params.id, 10);
-      const type = (req.query.type as 'project' | 'general') || 'project';
+      const type = (req.query.type as 'project' | 'general') || 'general';
 
       if (isNaN(fileId)) {
-        sendError(res, 'Invalid file ID', 400);
+        if (isCheck) sendError(res, 'ID berkas tidak valid', 400);
+        else this.renderDownloadErrorHtml(res, 'ID berkas tidak valid.', 400);
         return;
       }
 
       const target = await fileService.getFileDownloadTarget(fileId, type);
+
+      if (isCheck) {
+        if (target.redirectUrl) {
+          sendSuccess(
+            res,
+            { exists: true, fileName: target.fileName, redirectUrl: target.redirectUrl },
+            'File ready'
+          );
+          return;
+        }
+        if (target.filePath && fs.existsSync(target.filePath)) {
+          sendSuccess(res, { exists: true, fileName: target.fileName }, 'File ready');
+          return;
+        }
+        sendError(res, 'Berkas fisik tidak ditemukan di penyimpanan server', 404);
+        return;
+      }
 
       if (target.redirectUrl) {
         res.redirect(target.redirectUrl);
@@ -200,13 +252,30 @@ export class FileController {
       }
 
       if (!target.filePath || !fs.existsSync(target.filePath)) {
-        sendError(res, 'File tidak ditemukan di penyimpanan server', 404);
+        this.renderDownloadErrorHtml(
+          res,
+          'Berkas fisik tidak ditemukan di penyimpanan server. Pastikan volume/direktori penyimpanan server & web tersinkronisasi.',
+          404
+        );
+        return;
+      }
+
+      if (isInline) {
+        res.sendFile(target.filePath);
         return;
       }
 
       res.download(target.filePath, target.fileName);
     } catch (error: any) {
-      sendError(res, error.message || 'Failed to download file', 404);
+      if (isCheck) {
+        sendError(res, error.message || 'Berkas tidak ditemukan', 404);
+      } else {
+        this.renderDownloadErrorHtml(
+          res,
+          error.message || 'Gagal mengunduh berkas dari server.',
+          404
+        );
+      }
     }
   }
 }
