@@ -74,6 +74,7 @@ export class SettingsService {
             'plugins',
             'upload_doc_path',
             'web_app_url',
+            'prevent_screenshot',
         ];
         const placeholders = keys.map(() => '?').join(', ');
         const [rows] = await pool.query(`SELECT setting_name, setting_value
@@ -149,6 +150,7 @@ export class SettingsService {
         return {
             app_title: map.app_title || 'Indodefence ( IDD )',
             web_app_url: webAppUrl,
+            prevent_screenshot: map.prevent_screenshot === '1',
             enable_footer: map.enable_footer !== '0',
             footer_copyright_text: map.footer_copyright_text || 'Medianusa Permana',
             default_theme_color: rawThemeColor,
@@ -310,6 +312,14 @@ export class SettingsService {
                 cleanWebUrl = `https://${cleanWebUrl}`;
             }
             updates.push(['web_app_url', cleanWebUrl]);
+        }
+        if (input.prevent_screenshot !== undefined) {
+            const val = input.prevent_screenshot === true ||
+                input.prevent_screenshot === '1' ||
+                input.prevent_screenshot === 'yes'
+                ? '1'
+                : '0';
+            updates.push(['prevent_screenshot', val]);
         }
         if (input.upload_doc_path !== undefined && input.upload_doc_path.trim()) {
             const cleanPath = input.upload_doc_path.trim();
