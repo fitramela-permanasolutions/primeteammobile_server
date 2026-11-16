@@ -249,9 +249,16 @@ export class SettingsService {
         return resolved;
     }
     async upsertSetting(name, value) {
-        await pool.query(`INSERT INTO ${table('settings')} (setting_name, setting_value, type, deleted)
-       VALUES (?, ?, 'app', 0)
-       ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), deleted = 0`, [name, value]);
+        const [existing] = await pool.query(`SELECT setting_name FROM ${table('settings')} WHERE setting_name = ? LIMIT 1`, [name]);
+        if (existing && existing.length > 0) {
+            await pool.query(`UPDATE ${table('settings')}
+         SET setting_value = ?, deleted = 0
+         WHERE setting_name = ?`, [value, name]);
+        }
+        else {
+            await pool.query(`INSERT INTO ${table('settings')} (setting_name, setting_value, type, deleted)
+         VALUES (?, ?, 'app', 0)`, [name, value]);
+        }
     }
     buildPhpSerializedFile(fileName, fileId, serviceType) {
         const fn = fileName || '';
