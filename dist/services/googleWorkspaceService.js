@@ -86,6 +86,9 @@ export class GoogleWorkspaceService {
         const docsStatus = await this.tryRefreshToken(docsSettings.google_docs_client_id || '', docsSettings.google_docs_client_secret || '', docsSettings.google_docs_oauth_access_token || '');
         const sheetsStatus = await this.tryRefreshToken(sheetsSettings.google_sheets_client_id || '', sheetsSettings.google_sheets_client_secret || '', sheetsSettings.google_sheets_oauth_access_token || '');
         const meetStatus = await this.tryRefreshToken(meetSettings.google_client_id || '', meetSettings.google_client_secret || '', meetSettings.oauth_access_token || '');
+        const calendarClientSecret = decodeCiId(mainSettings.google_calendar_client_secret || '', 'google_calendar_client_secret');
+        const calendarTokenJson = decodeCiId(mainSettings.google_calendar_oauth_access_token || '', 'google_calendar_oauth_access_token');
+        const calendarStatus = await this.tryRefreshToken(mainSettings.google_calendar_client_id || '', calendarClientSecret || mainSettings.google_calendar_client_secret || '', calendarTokenJson || mainSettings.google_calendar_oauth_access_token || '');
         return {
             drive: {
                 enabled: mainSettings.enable_google_drive_api_to_upload_file === '1',
@@ -128,6 +131,15 @@ export class GoogleWorkspaceService {
                 total_items: Number(meetsCount?.total || 0),
                 oauth_url: `${baseUrl}/api/v1/google/oauth/url?service=meet`,
             },
+            calendar: {
+                enabled: mainSettings.enable_google_calendar_api === '1',
+                authorized_in_db: mainSettings.google_calendar_authorized === '1',
+                token_active: calendarStatus.valid,
+                status_message: calendarStatus.valid
+                    ? 'Connected & Active'
+                    : calendarStatus.error || 'Needs Re-authorization',
+                oauth_url: `${baseUrl}/api/v1/google/oauth/url?service=calendar`,
+            },
         };
     }
     /**
@@ -160,9 +172,12 @@ export class GoogleWorkspaceService {
                 ];
                 break;
             case 'meet':
+                clientId = meetSettings.google_client_id || '';
+                scopes = ['https://www.googleapis.com/auth/calendar'];
+                break;
             case 'calendar':
                 clientId =
-                    meetSettings.google_client_id || mainSettings.google_calendar_client_id || '';
+                    mainSettings.google_calendar_client_id || meetSettings.google_client_id || '';
                 scopes = ['https://www.googleapis.com/auth/calendar'];
                 break;
         }
@@ -204,9 +219,15 @@ export class GoogleWorkspaceService {
                 clientSecret = sheetsSettings.google_sheets_client_secret || '';
                 break;
             case 'meet':
-            case 'calendar':
                 clientId = meetSettings.google_client_id || '';
                 clientSecret = meetSettings.google_client_secret || '';
+                break;
+            case 'calendar':
+                clientId = mainSettings.google_calendar_client_id || '';
+                clientSecret =
+                    decodeCiId(mainSettings.google_calendar_client_secret || '', 'google_calendar_client_secret') ||
+                        mainSettings.google_calendar_client_secret ||
+                        '';
                 break;
         }
         const res = await fetch('https://oauth2.googleapis.com/token', {
@@ -241,9 +262,18 @@ export class GoogleWorkspaceService {
             await pool.query(`UPDATE ${table('google_sheets_integration_settings')} SET setting_value = ? WHERE setting_name = 'google_sheets_oauth_access_token'`, [tokenPayload]);
             await pool.query(`UPDATE ${table('google_sheets_integration_settings')} SET setting_value = '1' WHERE setting_name = 'google_sheets_authorized'`);
         }
-        else if (service === 'meet' || service === 'calendar') {
+        else if (service === 'meet') {
             await pool.query(`UPDATE ${table('google_meet_integration_settings')} SET setting_value = ? WHERE setting_name = 'oauth_access_token'`, [tokenPayload]);
             await pool.query(`UPDATE ${table('google_meet_integration_settings')} SET setting_value = '1' WHERE setting_name = 'google_meet_authorized'`);
+        }
+        else if (service === 'calendar') {
+            const encrypted = encodeCiId(tokenPayload, 'google_calendar_oauth_access_token');
+            await pool.query(`INSERT INTO ${table('settings')} (setting_name, setting_value, type, deleted)
+         VALUES ('google_calendar_oauth_access_token', ?, 'app', 0)
+         ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), deleted = 0`, [encrypted]);
+            await pool.query(`INSERT INTO ${table('settings')} (setting_name, setting_value, type, deleted)
+         VALUES ('google_calendar_authorized', '1', 'app', 0)
+         ON DUPLICATE KEY UPDATE setting_value = '1', deleted = 0`);
         }
         return { service, authorized: true };
     }
@@ -265,18 +295,22 @@ export class GoogleWorkspaceService {
             const share = String(r.share_with_team_members || '');
             return share === 'all' || share.split(',').includes(`member:${userId}`);
         })
-            .map((r) => ({
-            id: r.id,
-            title: r.title,
-            description: stripHtml(r.description),
-            created_by: r.created_by,
-            creator_name: r.creator_name || 'Team Member',
-            share_with_team_members: r.share_with_team_members,
-            google_document_id: r.google_document_id,
-            open_url: r.google_document_id?.startsWith('http')
+            .map((r) => {
+            const docUrl = r.google_document_id?.startsWith('http')
                 ? r.google_document_id
-                : `https://docs.google.com/document/d/${r.google_document_id}/edit`,
-        }));
+                : `https://docs.google.com/document/d/${r.google_document_id}/edit`;
+            return {
+                id: r.id,
+                title: r.title,
+                description: stripHtml(r.description),
+                created_by: r.created_by,
+                creator_name: r.creator_name || 'Team Member',
+                share_with_team_members: r.share_with_team_members,
+                google_document_id: r.google_document_id,
+                url: docUrl,
+                open_url: docUrl,
+            };
+        });
     }
     async createGoogleDoc(userId, input) {
         let docId = input.google_document_id?.trim() || '';
@@ -332,13 +366,40 @@ export class GoogleWorkspaceService {
             input.share_with || 'all',
             docId,
         ]);
+        const docUrl = `https://docs.google.com/document/d/${docId}/edit`;
         return {
             id: result.insertId,
             title: input.title.trim(),
             description: input.description || '',
             google_document_id: docId,
-            open_url: `https://docs.google.com/document/d/${docId}/edit`,
+            url: docUrl,
+            open_url: docUrl,
         };
+    }
+    async updateGoogleDoc(id, input) {
+        const updates = [];
+        const params = [];
+        if (input.title !== undefined && input.title.trim()) {
+            updates.push('title = ?');
+            params.push(input.title.trim());
+        }
+        if (input.description !== undefined) {
+            updates.push('description = ?');
+            params.push(input.description.trim() ? `<p>${input.description.trim()}</p>` : '');
+        }
+        if (input.google_document_id !== undefined && input.google_document_id.trim()) {
+            let docId = input.google_document_id.trim();
+            const urlMatch = docId.match(/\/document\/d\/([a-zA-Z0-9_-]+)/);
+            if (urlMatch)
+                docId = urlMatch[1];
+            updates.push('google_document_id = ?');
+            params.push(docId);
+        }
+        if (updates.length > 0) {
+            params.push(id);
+            await pool.query(`UPDATE ${table('google_docs')} SET ${updates.join(', ')} WHERE id = ? AND deleted = 0`, params);
+        }
+        return { id, updated: true };
     }
     /**
      * Lists Google Sheets from permana_google_sheets
@@ -358,18 +419,22 @@ export class GoogleWorkspaceService {
             const share = String(r.share_with_team_members || '');
             return share === 'all' || share.split(',').includes(`member:${userId}`);
         })
-            .map((r) => ({
-            id: r.id,
-            title: r.title,
-            description: stripHtml(r.description),
-            created_by: r.created_by,
-            creator_name: r.creator_name || 'Team Member',
-            share_with_team_members: r.share_with_team_members,
-            google_spreadsheet_id: r.google_spreadsheet_id,
-            open_url: r.google_spreadsheet_id?.startsWith('http')
+            .map((r) => {
+            const sheetUrl = r.google_spreadsheet_id?.startsWith('http')
                 ? r.google_spreadsheet_id
-                : `https://docs.google.com/spreadsheets/d/${r.google_spreadsheet_id}/edit`,
-        }));
+                : `https://docs.google.com/spreadsheets/d/${r.google_spreadsheet_id}/edit`;
+            return {
+                id: r.id,
+                title: r.title,
+                description: stripHtml(r.description),
+                created_by: r.created_by,
+                creator_name: r.creator_name || 'Team Member',
+                share_with_team_members: r.share_with_team_members,
+                google_spreadsheet_id: r.google_spreadsheet_id,
+                url: sheetUrl,
+                open_url: sheetUrl,
+            };
+        });
     }
     async createGoogleSheet(userId, input) {
         let sheetId = input.google_spreadsheet_id?.trim() || '';
@@ -429,6 +494,31 @@ export class GoogleWorkspaceService {
             google_spreadsheet_id: sheetId,
             open_url: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`,
         };
+    }
+    async updateGoogleSheet(id, input) {
+        const updates = [];
+        const params = [];
+        if (input.title !== undefined && input.title.trim()) {
+            updates.push('title = ?');
+            params.push(input.title.trim());
+        }
+        if (input.description !== undefined) {
+            updates.push('description = ?');
+            params.push(input.description.trim() ? `<p>${input.description.trim()}</p>` : '');
+        }
+        if (input.google_spreadsheet_id !== undefined && input.google_spreadsheet_id.trim()) {
+            let sheetId = input.google_spreadsheet_id.trim();
+            const urlMatch = sheetId.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+            if (urlMatch)
+                sheetId = urlMatch[1];
+            updates.push('google_spreadsheet_id = ?');
+            params.push(sheetId);
+        }
+        if (updates.length > 0) {
+            params.push(id);
+            await pool.query(`UPDATE ${table('google_sheets')} SET ${updates.join(', ')} WHERE id = ? AND deleted = 0`, params);
+        }
+        return { id, updated: true };
     }
     /**
      * Lists Google Meet meetings from permana_google_meet_meetings

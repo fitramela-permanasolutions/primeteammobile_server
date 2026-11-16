@@ -170,6 +170,21 @@ export class GoogleWorkspaceController {
     }
   }
 
+  async updateDoc(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const { title, description, google_document_id } = req.body;
+      const updated = await googleWorkspaceService.updateGoogleDoc(id, {
+        title,
+        description,
+        google_document_id,
+      });
+      sendSuccess(res, updated, 'Google Doc updated');
+    } catch (error: any) {
+      sendError(res, error.message || 'Failed to update Google Doc', 500);
+    }
+  }
+
   async getSheets(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       if (!req.user) {
@@ -206,6 +221,21 @@ export class GoogleWorkspaceController {
       sendSuccess(res, created, 'Google Sheet created', 201);
     } catch (error: any) {
       sendError(res, error.message || 'Failed to create Google Sheet', 500);
+    }
+  }
+
+  async updateSheet(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const { title, description, google_spreadsheet_id } = req.body;
+      const updated = await googleWorkspaceService.updateGoogleSheet(id, {
+        title,
+        description,
+        google_spreadsheet_id,
+      });
+      sendSuccess(res, updated, 'Google Sheet updated');
+    } catch (error: any) {
+      sendError(res, error.message || 'Failed to update Google Sheet', 500);
     }
   }
 

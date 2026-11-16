@@ -390,8 +390,8 @@ export class WorkspaceService {
         const [result] = await pool.query(`INSERT INTO ${table('tickets')}
        (client_id, project_id, ticket_type_id, title, created_by, requested_by, created_at,
         status, last_activity_at, assigned_to, creator_name, creator_email, labels, task_id,
-        merged_with_ticket_id, deleted, cc_contacts_and_emails)
-       VALUES (0, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), 'new', UTC_TIMESTAMP(), 0, '', '', '', 0, 0, 0, '')`, [input.project_id || 0, input.ticket_type_id || 1, input.title.trim(), userId, userId]);
+        closed_at, merged_with_ticket_id, deleted, cc_contacts_and_emails)
+       VALUES (0, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), 'new', UTC_TIMESTAMP(), 0, '', '', '', 0, '1970-01-01 00:00:00', 0, 0, '')`, [input.project_id || 0, input.ticket_type_id || 1, input.title.trim(), userId, userId]);
         const ticketId = result.insertId;
         // Insert initial comment
         await pool.query(`INSERT INTO ${table('ticket_comments')}
