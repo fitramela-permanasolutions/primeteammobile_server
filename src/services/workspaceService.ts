@@ -377,10 +377,87 @@ export class WorkspaceService {
     return { id: todoId, title: rows[0].title, status: nextStatus };
   }
 
+  async getTicketOptions() {
+    const [ticketTypes] = await pool.query<RowDataPacket[]>(
+      `SELECT id, title FROM ${table('ticket_types')} WHERE deleted = 0 ORDER BY id ASC`
+    );
+    const [clients] = await pool.query<RowDataPacket[]>(
+      `SELECT id, company_name FROM ${table('clients')} WHERE deleted = 0 ORDER BY company_name ASC LIMIT 100`
+    );
+    const [projects] = await pool.query<RowDataPacket[]>(
+      `SELECT id, title, client_id FROM ${table('projects')} WHERE deleted = 0 ORDER BY id DESC LIMIT 100`
+    );
+    const [staff] = await pool.query<RowDataPacket[]>(
+      `SELECT id, CONCAT(first_name, ' ', last_name) AS name
+       FROM ${table('users')}
+       WHERE deleted = 0 AND status = 'active' AND user_type = 'staff'
+       ORDER BY first_name ASC LIMIT 100`
+    );
+    return {
+      ticket_types: ticketTypes,
+      clients,
+      projects,
+      staff: staff.map((s) => ({ id: s.id, name: s.name?.trim() || 'Staff' })),
+    };
+  }
+
+  async getDashboardSummary(userId: number, isAdmin: boolean) {
+    const [[eventsTodayRow]]: any = await pool.query(
+      `SELECT COUNT(*) AS total FROM ${table('events')}
+       WHERE deleted = 0 AND DATE(start_date) <= CURDATE() AND DATE(COALESCE(end_date, start_date)) >= CURDATE()`
+    );
+    const [[completedProjRow]]: any = await pool.query(
+      `SELECT COUNT(*) AS total FROM ${table('projects')} WHERE deleted = 0 AND status = 'completed'`
+    );
+    const [[openTicketsRow]]: any = await pool.query(
+      `SELECT COUNT(*) AS total FROM ${table('tickets')} WHERE deleted = 0 AND status IN ('new', 'open', 'client_replied')`
+    );
+    const [taskStatusRows] = await pool.query<RowDataPacket[]>(
+      `SELECT ts.key_name, ts.title, COUNT(t.id) AS count
+       FROM ${table('task_status')} ts
+       LEFT JOIN ${table('tasks')} t ON t.status_id = ts.id AND t.deleted = 0
+         ${isAdmin ? '' : 'AND (t.assigned_to = ? OR FIND_IN_SET(?, t.collaborators))'}
+       WHERE ts.deleted = 0
+       GROUP BY ts.id, ts.key_name, ts.title
+       ORDER BY ts.sort ASC`,
+      isAdmin ? [] : [userId, userId]
+    );
+
+    let toDo = 0;
+    let inProgress = 0;
+    let done = 0;
+    for (const r of taskStatusRows) {
+      const k = String(r.key_name || r.title || '').toLowerCase();
+      const cnt = Number(r.count || 0);
+      if (k.includes('done') || k.includes('complete')) done += cnt;
+      else if (k.includes('progress') || k.includes('doing') || k.includes('review')) inProgress += cnt;
+      else toDo += cnt;
+    }
+
+    return {
+      events_today: Number(eventsTodayRow?.total || 0),
+      projects_completed: Number(completedProjRow?.total || 0),
+      open_tickets: Number(openTicketsRow?.total || 0),
+      task_status_breakdown: {
+        to_do: toDo,
+        in_progress: inProgress,
+        done,
+      },
+    };
+  }
+
   /**
    * Support Tickets (permana_tickets, permana_ticket_types, permana_ticket_comments)
    */
-  async getTickets(userId: number, isAdmin: boolean) {
+  async getTickets(userId: number, isAdmin: boolean, statusFilter?: string) {
+    const conditions = ['t.deleted = 0'];
+    const params: any[] = [];
+    if (statusFilter === 'open') {
+      conditions.push("t.status IN ('new', 'open', 'client_replied')");
+    } else if (statusFilter === 'closed') {
+      conditions.push("t.status = 'closed'");
+    }
+
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT t.id, t.client_id, t.project_id, t.ticket_type_id, t.title, t.created_by,
               t.created_at, t.status, t.last_activity_at, t.assigned_to,
@@ -395,9 +472,10 @@ export class WorkspaceService {
        LEFT JOIN ${table('projects')} p ON p.id = t.project_id
        LEFT JOIN ${table('users')} u ON u.id = t.assigned_to
        LEFT JOIN ${table('users')} cu ON cu.id = t.created_by
-       WHERE t.deleted = 0
+       WHERE ${conditions.join(' AND ')}
        ORDER BY t.last_activity_at DESC, t.id DESC
-       LIMIT 40`
+       LIMIT 50`,
+      params
     );
 
     return rows.map((r) => ({
@@ -406,9 +484,11 @@ export class WorkspaceService {
       status: r.status,
       ticket_type_id: r.ticket_type_id,
       ticket_type_title: r.ticket_type_title || 'General Support',
+      client_id: r.client_id || 0,
       client_name: r.client_name || 'Internal',
       project_id: r.project_id || 0,
       project_title: r.project_title || null,
+      assigned_to: r.assigned_to || 0,
       assigned_to_name: r.assigned_to_name?.trim() || 'Unassigned',
       creator_name: r.creator_name?.trim() || 'User',
       created_at: toIsoUtc(r.created_at) || r.created_at,
@@ -476,15 +556,32 @@ export class WorkspaceService {
 
   async createTicket(
     userId: number,
-    input: { title: string; description: string; ticket_type_id?: number; project_id?: number }
+    input: {
+      title: string;
+      description: string;
+      ticket_type_id?: number;
+      project_id?: number;
+      client_id?: number;
+      assigned_to?: number;
+      labels?: string;
+    }
   ) {
     const [result] = await pool.query<ResultSetHeader>(
       `INSERT INTO ${table('tickets')}
        (client_id, project_id, ticket_type_id, title, created_by, requested_by, created_at,
         status, last_activity_at, assigned_to, creator_name, creator_email, labels, task_id,
         closed_at, merged_with_ticket_id, deleted, cc_contacts_and_emails)
-       VALUES (0, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), 'new', UTC_TIMESTAMP(), 0, '', '', '', 0, '1970-01-01 00:00:00', 0, 0, '')`,
-      [input.project_id || 0, input.ticket_type_id || 1, input.title.trim(), userId, userId]
+       VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), 'new', UTC_TIMESTAMP(), ?, '', '', ?, 0, '1970-01-01 00:00:00', 0, 0, '')`,
+      [
+        input.client_id || 0,
+        input.project_id || 0,
+        input.ticket_type_id || 1,
+        input.title.trim(),
+        userId,
+        userId,
+        input.assigned_to || 0,
+        input.labels || '',
+      ]
     );
 
     const ticketId = result.insertId;
@@ -513,6 +610,43 @@ export class WorkspaceService {
       );
     }
 
+    return this.getTicketById(ticketId);
+  }
+
+  async replyTicket(ticketId: number, userId: number, description: string, isNote = false) {
+    await pool.query(
+      `INSERT INTO ${table('ticket_comments')}
+       (created_by, created_at, description, ticket_id, files, is_note, deleted)
+       VALUES (?, UTC_TIMESTAMP(), ?, ?, 'a:0:{}', ?, 0)`,
+      [userId, `<p>${description.trim()}</p>`, ticketId, isNote ? 1 : 0]
+    );
+
+    await pool.query(
+      `UPDATE ${table('tickets')}
+       SET last_activity_at = UTC_TIMESTAMP(),
+           status = CASE WHEN status = 'closed' THEN 'open' ELSE status END
+       WHERE id = ?`,
+      [ticketId]
+    );
+
+    return this.getTicketById(ticketId);
+  }
+
+  async updateTicketStatus(
+    ticketId: number,
+    status: 'new' | 'open' | 'client_replied' | 'closed'
+  ) {
+    if (status === 'closed') {
+      await pool.query(
+        `UPDATE ${table('tickets')} SET status = 'closed', closed_at = UTC_TIMESTAMP(), last_activity_at = UTC_TIMESTAMP() WHERE id = ?`,
+        [ticketId]
+      );
+    } else {
+      await pool.query(
+        `UPDATE ${table('tickets')} SET status = ?, last_activity_at = UTC_TIMESTAMP() WHERE id = ?`,
+        [status, ticketId]
+      );
+    }
     return this.getTicketById(ticketId);
   }
 }

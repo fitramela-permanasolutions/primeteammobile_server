@@ -237,13 +237,43 @@ export class WorkspaceController {
     }
   }
 
+  async getDashboardSummary(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        sendError(res, 'Unauthorized', 401);
+        return;
+      }
+      const summary = await workspaceService.getDashboardSummary(
+        req.user.id,
+        Boolean(req.user.is_admin)
+      );
+      sendSuccess(res, summary, 'Dashboard summary retrieved');
+    } catch (error: any) {
+      sendError(res, error.message || 'Failed to retrieve dashboard summary', 500);
+    }
+  }
+
+  async getTicketOptions(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const options = await workspaceService.getTicketOptions();
+      sendSuccess(res, options, 'Ticket options retrieved');
+    } catch (error: any) {
+      sendError(res, error.message || 'Failed to retrieve ticket options', 500);
+    }
+  }
+
   async getTickets(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       if (!req.user) {
         sendError(res, 'Unauthorized', 401);
         return;
       }
-      const tickets = await workspaceService.getTickets(req.user.id, Boolean(req.user.is_admin));
+      const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+      const tickets = await workspaceService.getTickets(
+        req.user.id,
+        Boolean(req.user.is_admin),
+        status
+      );
       sendSuccess(res, tickets, 'Tickets retrieved');
     } catch (error: any) {
       sendError(res, error.message || 'Failed to retrieve tickets', 500);
@@ -274,6 +304,9 @@ export class WorkspaceController {
           ? Number(rawTicketType.id ?? rawTicketType.value ?? 1)
           : Number(rawTicketType || 1);
       const projectId = req.body.project_id ?? req.body.projectId;
+      const clientId = req.body.client_id ?? req.body.clientId;
+      const assignedTo = req.body.assigned_to ?? req.body.assignedTo;
+      const labels = req.body.labels;
       if (!String(title || '').trim() || !String(description || '').trim()) {
         sendError(res, 'Judul dan deskripsi tiket wajib diisi', 400);
         return;
@@ -283,10 +316,53 @@ export class WorkspaceController {
         description: String(description).trim(),
         ticket_type_id: ticketTypeId,
         project_id: projectId ? Number(projectId) : 0,
+        client_id: clientId ? Number(clientId) : 0,
+        assigned_to: assignedTo ? Number(assignedTo) : 0,
+        labels: labels ? String(labels) : '',
       });
       sendSuccess(res, created, 'Ticket created', 201);
     } catch (error: any) {
       sendError(res, error.message || 'Failed to create ticket', 500);
+    }
+  }
+
+  async replyTicket(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        sendError(res, 'Unauthorized', 401);
+        return;
+      }
+      const ticketId = parseInt(req.params.id, 10);
+      const description = req.body.description;
+      const isNote = Boolean(req.body.is_note ?? req.body.isNote);
+      if (!String(description || '').trim()) {
+        sendError(res, 'Isi balasan tiket wajib diisi', 400);
+        return;
+      }
+      const updated = await workspaceService.replyTicket(
+        ticketId,
+        req.user.id,
+        String(description),
+        isNote
+      );
+      sendSuccess(res, updated, 'Reply added');
+    } catch (error: any) {
+      sendError(res, error.message || 'Failed to reply ticket', 500);
+    }
+  }
+
+  async updateTicketStatus(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const ticketId = parseInt(req.params.id, 10);
+      const status = req.body.status as 'new' | 'open' | 'client_replied' | 'closed';
+      if (!['new', 'open', 'client_replied', 'closed'].includes(status)) {
+        sendError(res, 'Status tiket tidak valid', 400);
+        return;
+      }
+      const updated = await workspaceService.updateTicketStatus(ticketId, status);
+      sendSuccess(res, updated, 'Ticket status updated');
+    } catch (error: any) {
+      sendError(res, error.message || 'Failed to update ticket status', 500);
     }
   }
 }

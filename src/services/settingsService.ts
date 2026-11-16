@@ -77,6 +77,7 @@ export class SettingsService {
       'module_invoice',
       'plugins',
       'upload_doc_path',
+      'web_app_url',
     ];
 
     const placeholders = keys.map(() => '?').join(', ');
@@ -164,9 +165,11 @@ export class SettingsService {
 
     const parsedPlugins = parsePhpSerializedArray(map.plugins || '') || {};
     const uploadDocPath = (map.upload_doc_path || defaultUploadDocPath).trim();
+    const webAppUrl = (map.web_app_url || 'https://indodefence.net').trim().replace(/\/+$/, '');
 
     return {
       app_title: map.app_title || 'Indodefence ( IDD )',
+      web_app_url: webAppUrl,
       enable_footer: map.enable_footer !== '0',
       footer_copyright_text: map.footer_copyright_text || 'Medianusa Permana',
       default_theme_color: rawThemeColor,
@@ -346,6 +349,7 @@ export class SettingsService {
     app_title?: string;
     footer_copyright_text?: string;
     upload_doc_path?: string;
+    web_app_url?: string;
     show_logo_in_signin_page?: boolean | string;
     show_background_image_in_signin_page?: boolean | string;
   }) {
@@ -366,6 +370,13 @@ export class SettingsService {
     }
     if (input.footer_copyright_text !== undefined) {
       updates.push(['footer_copyright_text', input.footer_copyright_text.trim()]);
+    }
+    if (input.web_app_url !== undefined && input.web_app_url.trim()) {
+      let cleanWebUrl = input.web_app_url.trim().replace(/\/+$/, '');
+      if (!/^https?:\/\//i.test(cleanWebUrl)) {
+        cleanWebUrl = `https://${cleanWebUrl}`;
+      }
+      updates.push(['web_app_url', cleanWebUrl]);
     }
     if (input.upload_doc_path !== undefined && input.upload_doc_path.trim()) {
       const cleanPath = input.upload_doc_path.trim();

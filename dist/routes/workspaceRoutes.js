@@ -15,7 +15,11 @@ router.delete('/notes/:id', (req, res) => workspaceController.deleteNote(req, re
 router.get('/todos', (req, res) => workspaceController.getTodos(req, res));
 router.post('/todos', (req, res) => workspaceController.createTodo(req, res));
 router.patch('/todos/:id/toggle', (req, res) => workspaceController.toggleTodo(req, res));
+router.get('/dashboard-summary', (req, res) => workspaceController.getDashboardSummary(req, res));
+router.get('/ticket-options', (req, res) => workspaceController.getTicketOptions(req, res));
 router.get('/tickets', (req, res) => workspaceController.getTickets(req, res));
 router.get('/tickets/:id', (req, res) => workspaceController.getTicketById(req, res));
 router.post('/tickets', (req, res) => workspaceController.createTicket(req, res));
+router.post('/tickets/:id/reply', (req, res) => workspaceController.replyTicket(req, res));
+router.patch('/tickets/:id/status', (req, res) => workspaceController.updateTicketStatus(req, res));
 export default router;
