@@ -28,13 +28,15 @@ export class SettingsController {
     }
     async updatePlatformSettings(req, res) {
         try {
-            const { default_theme_color, pwa_theme_color, app_title, footer_copyright_text, upload_doc_path, show_logo_in_signin_page, show_background_image_in_signin_page, } = req.body;
+            const { default_theme_color, pwa_theme_color, app_title, footer_copyright_text, upload_doc_path, web_app_url, prevent_screenshot, show_logo_in_signin_page, show_background_image_in_signin_page, } = req.body;
             const updated = await settingsService.updatePlatformSettings({
                 default_theme_color,
                 pwa_theme_color,
                 app_title,
                 footer_copyright_text,
                 upload_doc_path,
+                web_app_url,
+                prevent_screenshot,
                 show_logo_in_signin_page,
                 show_background_image_in_signin_page,
             });

@@ -36,6 +36,8 @@ export class SettingsController {
         app_title,
         footer_copyright_text,
         upload_doc_path,
+        web_app_url,
+        prevent_screenshot,
         show_logo_in_signin_page,
         show_background_image_in_signin_page,
       } = req.body;
@@ -45,6 +47,8 @@ export class SettingsController {
         app_title,
         footer_copyright_text,
         upload_doc_path,
+        web_app_url,
+        prevent_screenshot,
         show_logo_in_signin_page,
         show_background_image_in_signin_page,
       });
