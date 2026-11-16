@@ -48,16 +48,25 @@ export class WorkspaceController {
         sendError(res, 'Unauthorized', 401);
         return;
       }
-      const { leave_type_id, start_date, end_date, reason } = req.body;
-      if (!leave_type_id || !start_date || !reason) {
+      const rawLeaveType =
+        req.body.leave_type_id ?? req.body.leaveTypeId ?? req.body.leave_type ?? 0;
+      const leaveTypeId =
+        typeof rawLeaveType === 'object' && rawLeaveType !== null
+          ? Number(rawLeaveType.id ?? rawLeaveType.value ?? 0)
+          : Number(rawLeaveType || 0);
+      const startDate = req.body.start_date ?? req.body.startDate;
+      const endDate = req.body.end_date ?? req.body.endDate ?? startDate;
+      const reason = req.body.reason ?? req.body.description;
+
+      if (!leaveTypeId || !startDate || !String(reason || '').trim()) {
         sendError(res, 'Tipe cuti, tanggal mulai, dan alasan wajib diisi', 400);
         return;
       }
       const created = await workspaceService.createLeaveApplication(req.user.id, {
-        leave_type_id: Number(leave_type_id),
-        start_date: String(start_date),
-        end_date: String(end_date || start_date),
-        reason: String(reason),
+        leave_type_id: leaveTypeId,
+        start_date: String(startDate),
+        end_date: String(endDate || startDate),
+        reason: String(reason).trim(),
       });
       sendSuccess(res, created, 'Pengajuan cuti berhasil dikirim', 201);
     } catch (error: any) {
@@ -84,19 +93,25 @@ export class WorkspaceController {
         sendError(res, 'Unauthorized', 401);
         return;
       }
-      const { title, description, start_date, end_date, start_time, end_time, location, color, type } =
-        req.body;
-      if (!title || !start_date) {
+      const title = req.body.title;
+      const description = req.body.description;
+      const startDate = req.body.start_date ?? req.body.startDate;
+      const endDate = req.body.end_date ?? req.body.endDate ?? startDate;
+      const startTime = req.body.start_time ?? req.body.startTime;
+      const endTime = req.body.end_time ?? req.body.endTime;
+      const { location, color, type } = req.body;
+
+      if (!String(title || '').trim() || !startDate) {
         sendError(res, 'Judul dan tanggal acara wajib diisi', 400);
         return;
       }
       const created = await workspaceService.createEvent(req.user.id, {
-        title: String(title),
+        title: String(title).trim(),
         description,
-        start_date: String(start_date),
-        end_date,
-        start_time,
-        end_time,
+        start_date: String(startDate),
+        end_date: endDate ? String(endDate) : undefined,
+        start_time: startTime,
+        end_time: endTime,
         location,
         color,
         type,
@@ -131,17 +146,21 @@ export class WorkspaceController {
         sendError(res, 'Unauthorized', 401);
         return;
       }
-      const { title, description, project_id, color, is_public } = req.body;
+      const title = req.body.title;
+      const description = req.body.description;
+      const projectId = req.body.project_id ?? req.body.projectId;
+      const color = req.body.color;
+      const isPublic = req.body.is_public ?? req.body.isPublic;
       if (!title || !String(title).trim()) {
         sendError(res, 'Judul catatan wajib diisi', 400);
         return;
       }
       const created = await workspaceService.createNote(req.user.id, {
-        title: String(title),
+        title: String(title).trim(),
         description,
-        project_id: project_id ? Number(project_id) : 0,
+        project_id: projectId ? Number(projectId) : 0,
         color,
-        is_public: Boolean(is_public),
+        is_public: Boolean(isPublic),
       });
       sendSuccess(res, created, 'Note created', 201);
     } catch (error: any) {
@@ -186,15 +205,17 @@ export class WorkspaceController {
         sendError(res, 'Unauthorized', 401);
         return;
       }
-      const { title, description, start_date } = req.body;
+      const title = req.body.title;
+      const description = req.body.description;
+      const startDate = req.body.start_date ?? req.body.startDate;
       if (!title || !String(title).trim()) {
         sendError(res, 'Judul to-do wajib diisi', 400);
         return;
       }
       const created = await workspaceService.createTodo(req.user.id, {
-        title: String(title),
+        title: String(title).trim(),
         description,
-        start_date,
+        start_date: startDate ? String(startDate) : undefined,
       });
       sendSuccess(res, created, 'To-do created', 201);
     } catch (error: any) {
@@ -245,16 +266,23 @@ export class WorkspaceController {
         sendError(res, 'Unauthorized', 401);
         return;
       }
-      const { title, description, ticket_type_id, project_id } = req.body;
-      if (!title || !description) {
+      const title = req.body.title;
+      const description = req.body.description;
+      const rawTicketType = req.body.ticket_type_id ?? req.body.ticketTypeId ?? 1;
+      const ticketTypeId =
+        typeof rawTicketType === 'object' && rawTicketType !== null
+          ? Number(rawTicketType.id ?? rawTicketType.value ?? 1)
+          : Number(rawTicketType || 1);
+      const projectId = req.body.project_id ?? req.body.projectId;
+      if (!String(title || '').trim() || !String(description || '').trim()) {
         sendError(res, 'Judul dan deskripsi tiket wajib diisi', 400);
         return;
       }
       const created = await workspaceService.createTicket(req.user.id, {
-        title: String(title),
-        description: String(description),
-        ticket_type_id: ticket_type_id ? Number(ticket_type_id) : 1,
-        project_id: project_id ? Number(project_id) : 0,
+        title: String(title).trim(),
+        description: String(description).trim(),
+        ticket_type_id: ticketTypeId,
+        project_id: projectId ? Number(projectId) : 0,
       });
       sendSuccess(res, created, 'Ticket created', 201);
     } catch (error: any) {

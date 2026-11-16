@@ -8,16 +8,42 @@ import { AuthenticatedRequest } from '../types/index.js';
 
 export class GoogleWorkspaceController {
   private getBaseUrl(req: Request): string {
-    const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
-    const host = req.get('host') || 'localhost:5000';
-    return `${proto}://${host}`;
+    const publicEnv = process.env.PUBLIC_BASE_URL?.trim();
+    if (publicEnv) {
+      return publicEnv.replace(/\/+$/, '');
+    }
+
+    const host = req.get('x-forwarded-host') || req.get('host') || 'localhost:5000';
+    const rawProto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
+    const firstProto = rawProto.split(',')[0].trim().toLowerCase();
+    const isLocalHost =
+      /^(localhost|127\.0\.0\.1|10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/i.test(host);
+    const proto = !isLocalHost && firstProto === 'http' ? 'https' : firstProto;
+    return `${proto}://${host}`.replace(/\/+$/, '');
+  }
+
+  private getRedirectUri(req: Request): string {
+    const baseUrl = this.getBaseUrl(req);
+    return `${baseUrl}/api/v1/google/oauth/callback`;
   }
 
   async getStatus(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const baseUrl = this.getBaseUrl(req);
+      const redirectUri = this.getRedirectUri(req);
       const status = await googleWorkspaceService.getIntegrationStatus(baseUrl);
-      sendSuccess(res, status, 'Google Workspace integration status retrieved');
+      sendSuccess(
+        res,
+        {
+          ...status,
+          redirect_uri: redirectUri,
+          authorized_redirect_uris: [
+            redirectUri,
+            'https://mobileserver.indodefence.net/api/v1/google/oauth/callback',
+          ].filter((v, i, arr) => arr.indexOf(v) === i),
+        },
+        'Google Workspace integration status retrieved'
+      );
     } catch (error: any) {
       sendError(res, error.message || 'Failed to get Google integration status', 500);
     }
@@ -26,16 +52,32 @@ export class GoogleWorkspaceController {
   async getOAuthUrl(req: Request, res: Response): Promise<void> {
     try {
       const service = ((req.query.service as string) || 'drive') as GoogleServiceType;
-      const baseUrl = this.getBaseUrl(req);
-      const redirectUri = `${baseUrl}/api/v1/google/oauth/callback`;
-      const consentUrl = await googleWorkspaceService.getOAuthConsentUrl(service, redirectUri);
+      const appRedirectUri =
+        typeof req.query.app_redirect_uri === 'string' ? req.query.app_redirect_uri.trim() : '';
+      const redirectUri = this.getRedirectUri(req);
+      const statePayload = appRedirectUri
+        ? Buffer.from(JSON.stringify({ service, appRedirectUri }), 'utf8').toString('base64url')
+        : service;
+      const consentUrl = await googleWorkspaceService.getOAuthConsentUrl(
+        service,
+        redirectUri,
+        statePayload
+      );
 
       if (req.query.redirect === '1') {
         res.redirect(consentUrl);
         return;
       }
 
-      sendSuccess(res, { service, auth_url: consentUrl, redirect_uri: redirectUri });
+      sendSuccess(res, {
+        service,
+        auth_url: consentUrl,
+        redirect_uri: redirectUri,
+        authorized_redirect_uris: [
+          redirectUri,
+          'https://mobileserver.indodefence.net/api/v1/google/oauth/callback',
+        ].filter((v, i, arr) => arr.indexOf(v) === i),
+      });
     } catch (error: any) {
       sendError(res, error.message || 'Failed to generate OAuth URL', 400);
     }
@@ -44,15 +86,35 @@ export class GoogleWorkspaceController {
   async handleOAuthCallback(req: Request, res: Response): Promise<void> {
     try {
       const code = req.query.code as string;
-      const service = ((req.query.state as string) || 'drive') as GoogleServiceType;
+      const rawState = (req.query.state as string) || 'drive';
+      let service = 'drive' as GoogleServiceType;
+      let appRedirectUri = '';
+
+      if (['drive', 'docs', 'sheets', 'meet', 'calendar'].includes(rawState)) {
+        service = rawState as GoogleServiceType;
+      } else {
+        try {
+          const decoded = JSON.parse(Buffer.from(rawState, 'base64url').toString('utf8'));
+          if (decoded?.service) service = decoded.service;
+          if (decoded?.appRedirectUri) appRedirectUri = decoded.appRedirectUri;
+        } catch {
+          // fallback to drive
+        }
+      }
+
       if (!code) {
         res.status(400).send('<h3>OAuth Error: Missing authorization code</h3>');
         return;
       }
 
-      const baseUrl = this.getBaseUrl(req);
-      const redirectUri = `${baseUrl}/api/v1/google/oauth/callback`;
+      const redirectUri = this.getRedirectUri(req);
       await googleWorkspaceService.handleOAuthCallback(service, code, redirectUri);
+
+      if (appRedirectUri && /^(primeteam|exp|exps|https?):\/\//i.test(appRedirectUri)) {
+        const sep = appRedirectUri.includes('?') ? '&' : '?';
+        res.redirect(`${appRedirectUri}${sep}status=success&service=${encodeURIComponent(service)}`);
+        return;
+      }
 
       res.send(`
         <html>

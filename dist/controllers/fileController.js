@@ -48,16 +48,18 @@ export class FileController {
                 sendError(res, 'Unauthorized', 401);
                 return;
             }
-            const { title, parent_id, context, project_id, permissions } = req.body;
+            const { title, parent_id, parentId, current_folder_id, folder_id, context, project_id, projectId, permissions, } = req.body;
             if (!title || !String(title).trim()) {
                 sendError(res, 'Nama folder wajib diisi', 400);
                 return;
             }
+            const resolvedParentId = Number(parent_id ?? parentId ?? current_folder_id ?? folder_id ?? 0) || 0;
+            const resolvedProjectId = project_id ?? projectId;
             const created = await fileService.createFolder(req.user.id, {
                 title: String(title),
-                parentId: parent_id ? Number(parent_id) : 0,
-                context: context || (project_id ? 'project' : 'file_manager'),
-                projectId: project_id ? Number(project_id) : undefined,
+                parentId: resolvedParentId,
+                context: context || (resolvedProjectId ? 'project' : 'file_manager'),
+                projectId: resolvedProjectId ? Number(resolvedProjectId) : undefined,
                 permissions,
             });
             sendSuccess(res, created, 'Folder created', 201);

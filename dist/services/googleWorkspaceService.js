@@ -133,7 +133,7 @@ export class GoogleWorkspaceService {
     /**
      * Generates the Google OAuth2 authorization URL for a service
      */
-    async getOAuthConsentUrl(service, redirectUri) {
+    async getOAuthConsentUrl(service, redirectUri, customState) {
         const mainSettings = await this.getSettingsTableMap('settings');
         const docsSettings = await this.getSettingsTableMap('google_docs_integration_settings');
         const sheetsSettings = await this.getSettingsTableMap('google_sheets_integration_settings');
@@ -176,7 +176,7 @@ export class GoogleWorkspaceService {
             scope: scopes.join(' '),
             access_type: 'offline',
             prompt: 'select_account consent',
-            state: service,
+            state: customState || service,
         });
         return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
     }
