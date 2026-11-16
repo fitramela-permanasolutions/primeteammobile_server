@@ -211,27 +211,33 @@ export class SettingsService {
     async getResolvedUploadBaseDir() {
         const configuredPath = await this.getUploadDocPath();
         const envUploadDir = process.env.UPLOAD_DIR ? process.env.UPLOAD_DIR.trim() : '';
-        // If Docker/server env defines UPLOAD_DIR (e.g., /var/www/html/files) and DB holds default relative path,
-        // prefer env UPLOAD_DIR so shared container volumes stay synchronized with CodeIgniter web app.
-        const isDefaultRelative = configuredPath === '../paas/files' ||
-            configuredPath === './files' ||
-            configuredPath === 'files' ||
-            configuredPath === '../paas/files/' ||
-            configuredPath === './files/';
-        const effectivePath = envUploadDir && isDefaultRelative ? envUploadDir : configuredPath;
+        // If Docker/server env defines UPLOAD_DIR (e.g., /var/www/html/files) and it exists on disk,
+        // prefer envUploadDir whenever DB holds a relative path or a non-existent host path,
+        // so shared container volumes stay 100% synchronized with the CodeIgniter web app.
+        const isRelative = !path.isAbsolute(configuredPath);
+        const configuredExists = path.isAbsolute(configuredPath) && fs.existsSync(configuredPath);
+        const shouldPreferEnv = Boolean(envUploadDir && (fs.existsSync(envUploadDir) || isRelative) && (isRelative || !configuredExists));
+        const effectivePath = shouldPreferEnv ? envUploadDir : configuredPath;
         const resolved = path.isAbsolute(effectivePath)
             ? effectivePath
             : path.resolve(serverRootDir, effectivePath);
         try {
             if (!fs.existsSync(resolved)) {
-                fs.mkdirSync(resolved, { recursive: true });
+                fs.mkdirSync(resolved, { recursive: true, mode: 0o775 });
             }
+            fs.chmodSync(resolved, 0o775);
         }
         catch {
             // Fallback to UPLOAD_DIR or default paas/files if configured path cannot be created
             const fallback = envUploadDir || path.resolve(serverRootDir, '../paas/files');
-            if (!fs.existsSync(fallback)) {
-                fs.mkdirSync(fallback, { recursive: true });
+            try {
+                if (!fs.existsSync(fallback)) {
+                    fs.mkdirSync(fallback, { recursive: true, mode: 0o775 });
+                }
+                fs.chmodSync(fallback, 0o775);
+            }
+            catch {
+                // ignore chmod error
             }
             return fallback;
         }
@@ -252,6 +258,12 @@ export class SettingsService {
         return `a:1:{s:9:"file_name";s:${Buffer.byteLength(fn)}:"${fn}";}`;
     }
     async uploadSiteLogo(file) {
+        try {
+            fs.chmodSync(file.path, 0o664);
+        }
+        catch {
+            // ignore chmod error
+        }
         const driveRes = await googleDriveService.uploadFile(file.path, file.filename, file.mimetype, 'system');
         const serialized = this.buildPhpSerializedFile(file.filename, driveRes?.file_id || null, driveRes?.service_type || null);
         await this.upsertSetting('site_logo', serialized);
@@ -259,6 +271,12 @@ export class SettingsService {
         return this.getPlatformSettings();
     }
     async uploadSigninBackground(file) {
+        try {
+            fs.chmodSync(file.path, 0o664);
+        }
+        catch {
+            // ignore chmod error
+        }
         const driveRes = await googleDriveService.uploadFile(file.path, file.filename, file.mimetype, 'system');
         const serialized = this.buildPhpSerializedFile(file.filename, driveRes?.file_id || null, driveRes?.service_type || null);
         await this.upsertSetting('signin_page_background', serialized);

@@ -2,23 +2,50 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { settingsService } from '../services/settingsService.js';
+function ensureDirWithPermissions(baseDir, subSegments) {
+    let current = baseDir;
+    if (!fs.existsSync(current)) {
+        fs.mkdirSync(current, { recursive: true, mode: 0o775 });
+    }
+    try {
+        fs.chmodSync(current, 0o775);
+    }
+    catch {
+        // ignore chmod error
+    }
+    for (const seg of subSegments) {
+        current = path.join(current, seg);
+        if (!fs.existsSync(current)) {
+            fs.mkdirSync(current, { recursive: true, mode: 0o775 });
+        }
+        try {
+            fs.chmodSync(current, 0o775);
+        }
+        catch {
+            // ignore chmod error
+        }
+    }
+    return current;
+}
 const storage = multer.diskStorage({
     destination: async (req, file, cb) => {
         try {
             const baseUploadDir = await settingsService.getResolvedUploadBaseDir();
-            const projectId = req.body.project_id || req.body.projectId || req.params.projectId;
+            const projectId = req.body.project_id ||
+                req.body.projectId ||
+                req.params.projectId ||
+                req.query.projectId ||
+                req.query.project_id;
             const isSystemUpload = req.originalUrl?.includes('/settings/upload-logo') ||
                 req.originalUrl?.includes('/settings/upload-background');
-            let targetDir = path.join(baseUploadDir, 'general', 'global_files', 'all');
+            let subSegments = ['general', 'global_files', 'all'];
             if (isSystemUpload) {
-                targetDir = path.join(baseUploadDir, 'system');
+                subSegments = ['system'];
             }
             else if (projectId) {
-                targetDir = path.join(baseUploadDir, 'project_files', String(projectId));
+                subSegments = ['project_files', String(projectId)];
             }
-            if (!fs.existsSync(targetDir)) {
-                fs.mkdirSync(targetDir, { recursive: true });
-            }
+            const targetDir = ensureDirWithPermissions(baseUploadDir, subSegments);
             cb(null, targetDir);
         }
         catch (err) {

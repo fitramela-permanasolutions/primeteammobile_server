@@ -386,10 +386,46 @@ export class FileService {
     categoryId = 0
   ) {
     const folderType = projectId ? 'project_files' : 'general';
+    const baseDir = await settingsService.getResolvedUploadBaseDir();
+    let finalFilePath = file.path;
+
+    // If projectId was sent after the file field in multipart FormData, multer may have placed it
+    // inside general/global_files/all; relocate it into project_files/<projectId> to match CI4.
+    if (projectId) {
+      const expectedProjectDir = path.join(baseDir, 'project_files', String(projectId));
+      const expectedProjectPath = path.join(expectedProjectDir, file.filename);
+      if (path.resolve(finalFilePath) !== path.resolve(expectedProjectPath)) {
+        try {
+          if (!fs.existsSync(expectedProjectDir)) {
+            fs.mkdirSync(expectedProjectDir, { recursive: true, mode: 0o775 });
+          }
+          fs.chmodSync(expectedProjectDir, 0o775);
+          fs.renameSync(finalFilePath, expectedProjectPath);
+          finalFilePath = expectedProjectPath;
+        } catch {
+          // fallback copy + unlink across devices
+          try {
+            fs.copyFileSync(finalFilePath, expectedProjectPath);
+            fs.unlinkSync(finalFilePath);
+            finalFilePath = expectedProjectPath;
+          } catch {
+            // keep original path
+          }
+        }
+      }
+    }
+
+    // Ensure shared volume file & directory permissions (0775 dir / 0664 file) so Apache/PHP container can read/serve
+    try {
+      fs.chmodSync(path.dirname(finalFilePath), 0o775);
+      fs.chmodSync(finalFilePath, 0o664);
+    } catch {
+      // ignore chmod error on Windows/unsupported FS
+    }
 
     // Try uploading to Google Drive if configured in permana_settings
     const driveResult = await googleDriveService.uploadFile(
-      file.path,
+      finalFilePath,
       file.filename,
       file.mimetype,
       folderType
@@ -404,16 +440,19 @@ export class FileService {
     try {
       if (
         fs.existsSync(sharedDockerRoot) &&
-        !path.resolve(file.path).startsWith(path.resolve(sharedDockerRoot))
+        !path.resolve(finalFilePath).startsWith(path.resolve(sharedDockerRoot))
       ) {
         const subFolder = projectId
           ? path.join('project_files', String(projectId))
           : path.join('general', 'global_files', 'all');
         const syncDestDir = path.join(sharedDockerRoot, subFolder);
         if (!fs.existsSync(syncDestDir)) {
-          fs.mkdirSync(syncDestDir, { recursive: true });
+          fs.mkdirSync(syncDestDir, { recursive: true, mode: 0o775 });
         }
-        fs.copyFileSync(file.path, path.join(syncDestDir, file.filename));
+        fs.chmodSync(syncDestDir, 0o775);
+        const destFile = path.join(syncDestDir, file.filename);
+        fs.copyFileSync(finalFilePath, destFile);
+        fs.chmodSync(destFile, 0o664);
       }
     } catch {
       // ignore cross-sync error
@@ -455,13 +494,13 @@ export class FileService {
           'project'
         ),
         upload_doc_path: uploadDocPath,
-        storage_path: file.path,
+        storage_path: finalFilePath,
       };
     } else {
       const [result] = await pool.query<ResultSetHeader>(
         `INSERT INTO ${table('general_files')}
-         (file_name, file_id, service_type, file_size, description, context, user_id, uploaded_by, folder_id, created_at, deleted)
-         VALUES (?, ?, ?, ?, ?, 'global_files', 0, ?, ?, UTC_TIMESTAMP(), 0)`,
+         (file_name, file_id, service_type, file_size, description, client_id, user_id, uploaded_by, folder_id, context, context_id, created_at, deleted)
+         VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, 'global_files', 0, UTC_TIMESTAMP(), 0)`,
         [file.filename, fileId, serviceType, file.size, description || '', userId, folderId]
       );
 
@@ -483,7 +522,7 @@ export class FileService {
           'general'
         ),
         upload_doc_path: uploadDocPath,
-        storage_path: file.path,
+        storage_path: finalFilePath,
       };
     }
   }
