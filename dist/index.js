@@ -33,7 +33,7 @@ app.use('/files-static', async (req, res, next) => {
         const baseRoots = Array.from(new Set([dynamicDir, envUploadDir, '/var/www/html/files', fallbackFilesDir].filter(Boolean)));
         const candidates = [];
         for (const root of baseRoots) {
-            candidates.push(path.join(root, relPath), path.join(root, 'general', 'global_files', 'all', filename), path.join(root, 'general', filename));
+            candidates.push(path.join(root, relPath), path.join(root, 'timeline_files', filename), path.join(root, 'general', 'global_files', 'all', filename), path.join(root, 'general', filename));
         }
         for (const candidate of candidates) {
             if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {

@@ -40,16 +40,18 @@ const storage = multer.diskStorage({
                 req.query.project_id;
             const isSystemUpload = req.originalUrl?.includes('/settings/upload-logo') ||
                 req.originalUrl?.includes('/settings/upload-background');
-            const isTaskCommentUpload = req.originalUrl?.includes('/tasks/') && req.originalUrl?.includes('/comments');
+            // In PAAS (CodeIgniter 4), ALL project_comments & task_comments attachments live in files/timeline_files/
+            const isCommentUpload = (req.originalUrl?.includes('/tasks/') && req.originalUrl?.includes('/comments')) ||
+                (req.originalUrl?.includes('/projects/') && req.originalUrl?.includes('/comments'));
             let subSegments = ['general', 'global_files', 'all'];
             if (isSystemUpload) {
                 subSegments = ['system'];
             }
+            else if (isCommentUpload) {
+                subSegments = ['timeline_files'];
+            }
             else if (projectId) {
                 subSegments = ['project_files', String(projectId)];
-            }
-            else if (isTaskCommentUpload) {
-                subSegments = ['timeline_files'];
             }
             const targetDir = ensureDirWithPermissions(baseUploadDir, subSegments);
             cb(null, targetDir);
@@ -93,6 +95,15 @@ export async function validateUploadSize(req, res, next) {
             }
             sendError(res, `Ukuran berkas melebihi batas maksimal ${maxMb} MB yang ditetapkan oleh Admin.`, 400);
             return;
+        }
+        // Ensure uploaded file is world/group-readable (0664) so PAAS (Apache www-data) can always preview it
+        try {
+            if (req.file.path && fs.existsSync(req.file.path)) {
+                fs.chmodSync(req.file.path, 0o664);
+            }
+        }
+        catch {
+            // ignore chmod errors on Windows
         }
         next();
     }

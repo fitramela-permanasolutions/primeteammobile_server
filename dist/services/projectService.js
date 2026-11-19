@@ -1,6 +1,7 @@
 import { pool, table } from '../config/database.js';
 import { resolveCiFile, stripHtml, toIsoUtc } from '../utils/ciHelpers.js';
 import { pusherService } from './pusherService.js';
+import { googleDriveService } from './googleDriveService.js';
 function formatBytes(bytes) {
     if (!bytes || bytes <= 0)
         return '0 B';
@@ -9,26 +10,45 @@ function formatBytes(bytes) {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
-function buildPhpSerializedFilesArray(file) {
-    const fn = file.filename;
+function buildPhpSerializedFilesArray(file, driveRes) {
+    const fn = driveRes?.file_name || file.filename;
     const size = file.size || 0;
+    if (driveRes?.file_id && driveRes?.service_type === 'google') {
+        const fid = driveRes.file_id;
+        return `a:1:{i:0;a:4:{s:9:"file_name";s:${Buffer.byteLength(fn)}:"${fn}";s:9:"file_size";i:${size};s:7:"file_id";s:${Buffer.byteLength(fid)}:"${fid}";s:12:"service_type";s:6:"google";}}`;
+    }
     return `a:1:{i:0;a:4:{s:9:"file_name";s:${Buffer.byteLength(fn)}:"${fn}";s:9:"file_size";i:${size};s:7:"file_id";N;s:12:"service_type";N;}}`;
 }
 function parseAttachments(rawFiles, folderPath) {
     if (!rawFiles || rawFiles === 'a:0:{}')
         return [];
     const results = [];
-    const regex = /s:9:"file_name";s:\d+:"([^"]+)"/g;
-    let match;
-    while ((match = regex.exec(rawFiles)) !== null) {
-        const fileName = match[1];
-        const cleanName = fileName.replace(/^_file[a-f0-9]+-/i, '');
+    // Split serialized array entries (i:0;a:...{...}) so each file's file_name, file_id & service_type stay paired
+    const itemBlocks = rawFiles.match(/a:\d+:\{[^}]+\}/g) || [rawFiles];
+    for (const block of itemBlocks) {
+        const fnMatch = /s:9:"file_name";s:\d+:"([^"]+)"/.exec(block);
+        if (!fnMatch)
+            continue;
+        const fileName = fnMatch[1];
+        const fidMatch = /s:7:"file_id";s:\d+:"([^"]+)"/.exec(block);
+        const stMatch = /s:12:"service_type";s:\d+:"([^"]+)"/.exec(block);
+        const fileId = fidMatch ? fidMatch[1] : null;
+        const serviceType = stMatch ? stMatch[1] : 'local';
+        const cleanName = fileName.replace(/^[a-z0-9_]*_file[a-f0-9]+-/i, '');
         const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(fileName);
+        let url = `/files-static/${folderPath}/${encodeURIComponent(fileName)}`;
+        if (serviceType === 'google' && fileId) {
+            url = isImage
+                ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`
+                : `https://drive.google.com/file/d/${fileId}/preview`;
+        }
         results.push({
             file_name: fileName,
             original_name: cleanName,
-            url: `/files-static/${folderPath}/${encodeURIComponent(fileName)}`,
+            url,
             is_image: isImage,
+            file_id: fileId,
+            service_type: serviceType,
         });
     }
     return results;
@@ -314,13 +334,19 @@ export class ProjectService {
                 author_name: String(c.author_name || '').trim() || 'User',
                 author_avatar: avatar?.thumbnailUrl || null,
                 created_at: toIsoUtc(c.created_at) || c.created_at,
-                attachments: parseAttachments(c.files, `project_files/${projectId}`),
+                attachments: parseAttachments(c.files, 'timeline_files'),
             };
         });
     }
     async addProjectComment(projectId, userId, isAdmin, description, file) {
         await this.assertProjectAccess(projectId, userId, isAdmin);
-        const serializedFiles = file ? buildPhpSerializedFilesArray(file) : 'a:0:{}';
+        let driveRes = null;
+        if (file) {
+            driveRes = await googleDriveService
+                .uploadFile(file.path, file.filename, file.mimetype, 'timeline_files')
+                .catch(() => null);
+        }
+        const serializedFiles = file ? buildPhpSerializedFilesArray(file, driveRes) : 'a:0:{}';
         const htmlDesc = description ? `<p>${description.trim()}</p>` : `<p>Mengunggah lampiran</p>`;
         const [result] = await pool.query(`INSERT INTO ${table('project_comments')}
        (created_by, created_at, description, project_id, comment_id, task_id, file_id, customer_feedback_id, files, deleted)
@@ -336,7 +362,7 @@ export class ProjectService {
             author_name: authorName,
             author_avatar: avatar?.thumbnailUrl || null,
             created_at: new Date().toISOString(),
-            attachments: parseAttachments(serializedFiles, `project_files/${projectId}`),
+            attachments: parseAttachments(serializedFiles, 'timeline_files'),
         };
         pusherService.triggerProjectComment(projectId, payload).catch(() => { });
         const memberIds = (await this.getProjectMemberIds(projectId)).filter((id) => id !== userId);
@@ -362,15 +388,21 @@ export class ProjectService {
        WHERE pf.project_id = ? AND pf.deleted = 0
        ORDER BY pf.created_at DESC, pf.id DESC`, [projectId]);
         return rows.map((f) => {
-            const cleanName = String(f.file_name || '').replace(/^_file[a-f0-9]+-/i, '');
+            const cleanName = String(f.file_name || '').replace(/^[a-z0-9_]*_file[a-f0-9]+-/i, '');
             const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(f.file_name || '');
+            const isGoogle = f.service_type === 'google' && Boolean(f.file_id);
+            const previewUrl = isGoogle
+                ? isImage
+                    ? `https://drive.google.com/thumbnail?id=${f.file_id}&sz=w1200`
+                    : `https://drive.google.com/file/d/${f.file_id}/preview`
+                : `/files-static/project_files/${projectId}/${encodeURIComponent(f.file_name)}`;
             return {
                 id: f.id,
                 type: 'project',
                 file_name: f.file_name,
                 original_name: cleanName,
                 file_id: f.file_id || null,
-                service_type: f.service_type || 'local',
+                service_type: isGoogle ? 'google' : 'local',
                 description: stripHtml(f.description),
                 file_size: Number(f.file_size || 0),
                 file_size_formatted: formatBytes(Number(f.file_size || 0)),
@@ -379,24 +411,36 @@ export class ProjectService {
                 uploaded_by_name: String(f.uploaded_by_name || '').trim() || 'User',
                 created_at: toIsoUtc(f.created_at) || f.created_at,
                 is_image: isImage,
-                preview_url: `/files-static/project_files/${projectId}/${encodeURIComponent(f.file_name)}`,
+                preview_url: previewUrl,
             };
         });
     }
     async uploadProjectFile(projectId, userId, isAdmin, file, description) {
         await this.assertProjectAccess(projectId, userId, isAdmin);
+        const driveRes = await googleDriveService
+            .uploadFile(file.path, file.filename, file.mimetype, 'project_files')
+            .catch(() => null);
+        const storedFileName = driveRes?.file_name || file.filename;
+        const storedFileId = driveRes?.file_id || null;
+        const storedServiceType = driveRes?.service_type || null;
         const [result] = await pool.query(`INSERT INTO ${table('project_files')}
        (file_name, file_id, service_type, description, file_size, created_at, project_id, uploaded_by, category_id, deleted, folder_id)
-       VALUES (?, NULL, NULL, ?, ?, UTC_TIMESTAMP(), ?, ?, 0, 0, 0)`, [file.filename, description || '', file.size || 0, projectId, userId]);
-        const cleanName = file.filename.replace(/^_file[a-f0-9]+-/i, '');
-        const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(file.filename);
+       VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP(), ?, ?, 0, 0, 0)`, [storedFileName, storedFileId, storedServiceType, description || '', file.size || 0, projectId, userId]);
+        const cleanName = storedFileName.replace(/^[a-z0-9_]*_file[a-f0-9]+-/i, '');
+        const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(storedFileName);
+        const isGoogle = storedServiceType === 'google' && Boolean(storedFileId);
+        const previewUrl = isGoogle
+            ? isImage
+                ? `https://drive.google.com/thumbnail?id=${storedFileId}&sz=w1200`
+                : `https://drive.google.com/file/d/${storedFileId}/preview`
+            : `/files-static/project_files/${projectId}/${encodeURIComponent(storedFileName)}`;
         return {
             id: result.insertId,
             type: 'project',
-            file_name: file.filename,
+            file_name: storedFileName,
             original_name: cleanName,
-            file_id: null,
-            service_type: 'local',
+            file_id: storedFileId,
+            service_type: isGoogle ? 'google' : 'local',
             description,
             file_size: file.size || 0,
             file_size_formatted: formatBytes(file.size || 0),
@@ -405,7 +449,7 @@ export class ProjectService {
             uploaded_by_name: 'Anda',
             created_at: new Date().toISOString(),
             is_image: isImage,
-            preview_url: `/files-static/project_files/${projectId}/${encodeURIComponent(file.filename)}`,
+            preview_url: previewUrl,
         };
     }
     async getProjectChatMessages(projectId, userId, isAdmin) {
@@ -436,7 +480,13 @@ export class ProjectService {
     async sendProjectChatMessage(projectId, userId, isAdmin, message, file) {
         await this.assertProjectAccess(projectId, userId, isAdmin);
         await this.ensureProjectChatTable();
-        const serializedFiles = file ? buildPhpSerializedFilesArray(file) : null;
+        let driveRes = null;
+        if (file) {
+            driveRes = await googleDriveService
+                .uploadFile(file.path, file.filename, file.mimetype, 'project_files')
+                .catch(() => null);
+        }
+        const serializedFiles = file ? buildPhpSerializedFilesArray(file, driveRes) : null;
         const finalMsg = message.trim() || (file ? `Mengirim lampiran: ${file.originalname}` : '');
         const [result] = await pool.query(`INSERT INTO ${table('project_chat_messages')}
        (project_id, user_id, message, files, created_at, deleted)

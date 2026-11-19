@@ -13,9 +13,14 @@ export class GoogleDriveService {
         return map;
     }
     async saveSetting(name, value) {
-        await pool.query(`INSERT INTO ${table('settings')} (setting_name, setting_value, type, deleted)
-       VALUES (?, ?, 'app', 0)
-       ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), deleted = 0`, [name, value]);
+        const [existing] = await pool.query(`SELECT setting_name FROM ${table('settings')} WHERE setting_name = ? LIMIT 1`, [name]);
+        if (existing && existing.length > 0) {
+            await pool.query(`UPDATE ${table('settings')} SET setting_value = ?, deleted = 0 WHERE setting_name = ?`, [value, name]);
+        }
+        else {
+            await pool.query(`INSERT INTO ${table('settings')} (setting_name, setting_value, type, deleted)
+         VALUES (?, ?, 'app', 0)`, [name, value]);
+        }
     }
     /**
      * Obtains a valid Google Drive OAuth2 access token from permana_settings,

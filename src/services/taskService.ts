@@ -2,28 +2,58 @@ import { pool, table } from '../config/database.js';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { resolveCiFile, stripHtml, toIsoUtc } from '../utils/ciHelpers.js';
 import { pusherService } from './pusherService.js';
+import { googleDriveService, GoogleDriveUploadResult } from './googleDriveService.js';
 
-function buildTaskCommentPhpFiles(file: Express.Multer.File): string {
-  const fn = file.filename;
+function buildTaskCommentPhpFiles(
+  file: Express.Multer.File,
+  driveRes?: GoogleDriveUploadResult | null
+): string {
+  const fn = driveRes?.file_name || file.filename;
   const size = file.size || 0;
+  if (driveRes?.file_id && driveRes?.service_type === 'google') {
+    const fid = driveRes.file_id;
+    return `a:1:{i:0;a:4:{s:9:"file_name";s:${Buffer.byteLength(fn)}:"${fn}";s:9:"file_size";i:${size};s:7:"file_id";s:${Buffer.byteLength(fid)}:"${fid}";s:12:"service_type";s:6:"google";}}`;
+  }
   return `a:1:{i:0;a:4:{s:9:"file_name";s:${Buffer.byteLength(fn)}:"${fn}";s:9:"file_size";i:${size};s:7:"file_id";N;s:12:"service_type";N;}}`;
 }
 
-function parseTaskCommentAttachments(rawFiles: string | null | undefined, projectId: number) {
+function parseTaskCommentAttachments(rawFiles: string | null | undefined) {
   if (!rawFiles || rawFiles === 'a:0:{}') return [];
-  const results: Array<{ file_name: string; original_name: string; url: string; is_image: boolean }> = [];
-  const regex = /s:9:"file_name";s:\d+:"([^"]+)"/g;
-  let match: RegExpExecArray | null;
-  const folder = projectId > 0 ? `project_files/${projectId}` : 'timeline_files';
-  while ((match = regex.exec(rawFiles)) !== null) {
-    const fileName = match[1];
-    const cleanName = fileName.replace(/^_file[a-f0-9]+-/i, '');
+  const results: Array<{
+    file_name: string;
+    original_name: string;
+    url: string;
+    is_image: boolean;
+    file_id: string | null;
+    service_type: string;
+  }> = [];
+  // In PAAS (CodeIgniter 4), ALL project_comments / task_comments attachments live in files/timeline_files/
+  const itemBlocks = rawFiles.match(/a:\d+:\{[^}]+\}/g) || [rawFiles];
+  for (const block of itemBlocks) {
+    const fnMatch = /s:9:"file_name";s:\d+:"([^"]+)"/.exec(block);
+    if (!fnMatch) continue;
+    const fileName = fnMatch[1];
+    const fidMatch = /s:7:"file_id";s:\d+:"([^"]+)"/.exec(block);
+    const stMatch = /s:12:"service_type";s:\d+:"([^"]+)"/.exec(block);
+    const fileId = fidMatch ? fidMatch[1] : null;
+    const serviceType = stMatch ? stMatch[1] : 'local';
+    const cleanName = fileName.replace(/^[a-z0-9_]*_file[a-f0-9]+-/i, '');
     const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(fileName);
+
+    let url = `/files-static/timeline_files/${encodeURIComponent(fileName)}`;
+    if (serviceType === 'google' && fileId) {
+      url = isImage
+        ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`
+        : `https://drive.google.com/file/d/${fileId}/preview`;
+    }
+
     results.push({
       file_name: fileName,
       original_name: cleanName,
-      url: `/files-static/${folder}/${encodeURIComponent(fileName)}`,
+      url,
       is_image: isImage,
+      file_id: fileId,
+      service_type: serviceType,
     });
   }
   return results;
@@ -242,7 +272,7 @@ export class TaskService {
         user_name: authorName,
         author_avatar: cAvatar?.thumbnailUrl || null,
         user_avatar: cAvatar?.thumbnailUrl || null,
-        attachments: parseTaskCommentAttachments(c.files, Number(r.project_id || 0)),
+        attachments: parseTaskCommentAttachments(c.files),
       };
     });
 
@@ -380,7 +410,13 @@ export class TaskService {
     );
     const projectId = taskRows.length > 0 ? Number(taskRows[0].project_id || 0) : 0;
     const taskTitle = String(taskRows[0]?.title || 'Task').trim();
-    const serializedFiles = file ? buildTaskCommentPhpFiles(file) : 'a:0:{}';
+    let driveRes: GoogleDriveUploadResult | null = null;
+    if (file) {
+      driveRes = await googleDriveService
+        .uploadFile(file.path, file.filename, file.mimetype, 'timeline_files')
+        .catch(() => null);
+    }
+    const serializedFiles = file ? buildTaskCommentPhpFiles(file, driveRes) : 'a:0:{}';
     const cleanDesc = description.trim() || (file ? `Lampiran: ${file.originalname}` : '');
 
     const [result] = await pool.query<ResultSetHeader>(
@@ -408,7 +444,7 @@ export class TaskService {
       author_avatar: avatar?.thumbnailUrl || null,
       user_avatar: avatar?.thumbnailUrl || null,
       created_at: new Date().toISOString(),
-      attachments: parseTaskCommentAttachments(serializedFiles, projectId),
+      attachments: parseTaskCommentAttachments(serializedFiles),
     };
 
     pusherService.triggerTaskComment(taskId, commentPayload).catch(() => {});

@@ -45,6 +45,7 @@ app.use('/files-static', async (req, res, next) => {
     for (const root of baseRoots) {
       candidates.push(
         path.join(root, relPath),
+        path.join(root, 'timeline_files', filename),
         path.join(root, 'general', 'global_files', 'all', filename),
         path.join(root, 'general', filename)
       );
