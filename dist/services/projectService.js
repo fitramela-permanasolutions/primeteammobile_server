@@ -480,5 +480,15 @@ export class ProjectService {
         }
         return chatPayload;
     }
+    async deleteProjectFile(projectId, fileId, userId, isAdmin) {
+        await this.assertProjectAccess(projectId, userId, isAdmin);
+        await pool.query(`UPDATE ${table('project_files')} SET deleted = 1 WHERE id = ? AND project_id = ?`, [fileId, projectId]);
+        return { id: fileId, deleted: true };
+    }
+    async deleteProjectComment(projectId, commentId, userId, isAdmin) {
+        await this.assertProjectAccess(projectId, userId, isAdmin);
+        await pool.query(`UPDATE ${table('project_comments')} SET deleted = 1 WHERE id = ? AND project_id = ? AND task_id = 0`, [commentId, projectId]);
+        return { id: commentId, deleted: true };
+    }
 }
 export const projectService = new ProjectService();

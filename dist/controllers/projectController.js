@@ -1,6 +1,6 @@
 import { projectService } from '../services/projectService.js';
 import { sendSuccess, sendError } from '../utils/response.js';
-import { isAdminOrSuperAdmin, canWriteInProject } from '../utils/rbac.js';
+import { isAdminOrSuperAdmin, canWriteInProject, isPicRole } from '../utils/rbac.js';
 export class ProjectController {
     async getProjects(req, res) {
         try {
@@ -153,6 +153,38 @@ export class ProjectController {
         }
         catch (error) {
             sendError(res, error.message || 'Gagal mengirim pesan', 400);
+        }
+    }
+    async deleteProjectFile(req, res) {
+        try {
+            if (!req.user || (!isAdminOrSuperAdmin(req.user) && !isPicRole(req.user))) {
+                sendError(res, 'Akses ditolak: Hanya role PIC atau Admin yang dapat menghapus berkas project.', 403);
+                return;
+            }
+            const projectId = parseInt(req.params.id, 10);
+            const fileId = parseInt(req.params.fileId, 10);
+            const isAdmin = isAdminOrSuperAdmin(req.user);
+            const result = await projectService.deleteProjectFile(projectId, fileId, req.user.id, isAdmin);
+            sendSuccess(res, result, 'Berkas project berhasil dihapus');
+        }
+        catch (error) {
+            sendError(res, error.message || 'Gagal menghapus berkas project', 400);
+        }
+    }
+    async deleteProjectComment(req, res) {
+        try {
+            if (!req.user || (!isAdminOrSuperAdmin(req.user) && !isPicRole(req.user))) {
+                sendError(res, 'Akses ditolak: Hanya role PIC atau Admin yang dapat menghapus komentar project.', 403);
+                return;
+            }
+            const projectId = parseInt(req.params.id, 10);
+            const commentId = parseInt(req.params.commentId, 10);
+            const isAdmin = isAdminOrSuperAdmin(req.user);
+            const result = await projectService.deleteProjectComment(projectId, commentId, req.user.id, isAdmin);
+            sendSuccess(res, result, 'Komentar project berhasil dihapus');
+        }
+        catch (error) {
+            sendError(res, error.message || 'Gagal menghapus komentar project', 400);
         }
     }
 }
