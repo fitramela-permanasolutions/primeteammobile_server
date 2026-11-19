@@ -350,6 +350,9 @@ export class SettingsService {
             'pusher_secret',
             'pusher_cluster',
             'google_oauth_client_id',
+            'google_oauth_client_secret',
+            'google_drive_client_id',
+            'google_drive_client_secret',
         ];
         const placeholders = keys.map(() => '?').join(', ');
         const [rows] = await pool.query(`SELECT setting_name, setting_value
@@ -369,7 +372,14 @@ export class SettingsService {
             pusher_key: map.pusher_key || '',
             pusher_secret: map.pusher_secret || '',
             pusher_cluster: map.pusher_cluster || 'ap1',
-            google_oauth_client_id: map.google_oauth_client_id || process.env.GOOGLE_CLIENT_ID || '',
+            google_oauth_client_id: map.google_oauth_client_id ||
+                process.env.GOOGLE_CLIENT_ID ||
+                map.google_drive_client_id ||
+                '',
+            google_oauth_client_secret: map.google_oauth_client_secret ||
+                process.env.GOOGLE_CLIENT_SECRET ||
+                map.google_drive_client_secret ||
+                '',
         };
     }
     async getMaxUploadSizeBytes() {
@@ -482,6 +492,9 @@ export class SettingsService {
         }
         if (input.google_oauth_client_id !== undefined) {
             updates.push(['google_oauth_client_id', String(input.google_oauth_client_id).trim()]);
+        }
+        if (input.google_oauth_client_secret !== undefined) {
+            updates.push(['google_oauth_client_secret', String(input.google_oauth_client_secret).trim()]);
         }
         if (input.upload_doc_path !== undefined && input.upload_doc_path.trim()) {
             const cleanPath = input.upload_doc_path.trim();

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { authService } from '../services/authService.js';
+import { settingsService } from '../services/settingsService.js';
 import { sendSuccess, sendError } from '../utils/response.js';
 import { AuthenticatedRequest } from '../types/index.js';
 
@@ -61,11 +62,104 @@ export class AuthController {
   }
 
   /**
-   * HTTPS OAuth 2.0 callback bridge compliant with Google Web Client ID policy.
-   * Reads the fragment (#access_token=...&state=<appReturnUrl>) in the browser
-   * and redirects back to the mobile app deep link (primeteam:// or exp://).
+   * Starts Google OAuth 2.0 Authorization Code Flow (Web Client ID) from the backend
+   * so redirect_uri is ALWAYS a compliant HTTPS URL (/api/v1/auth/google/callback).
    */
-  googleOAuthCallback(req: Request, res: Response): void {
+  async googleOAuthStart(req: Request, res: Response): Promise<void> {
+    try {
+      const secrets = await settingsService.getAdminSecrets();
+      const clientId = (secrets.google_oauth_client_id || '').trim();
+      const clientSecret = (secrets.google_oauth_client_secret || '').trim();
+      if (!clientId) {
+        res.status(400).send('Google OAuth Client ID belum dikonfigurasi oleh Admin.');
+        return;
+      }
+
+      const appRedirectUri = String(req.query.app_redirect_uri || 'primeteam://google-auth').trim();
+      const proto = (req.headers['x-forwarded-proto'] as string)?.split(',')[0]?.trim() || req.protocol || 'https';
+      const host = req.get('host');
+      const httpsCallbackUrl = `${proto}://${host}/api/v1/auth/google/callback`;
+
+      const responseType = clientSecret ? 'code' : 'token';
+      const params = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: httpsCallbackUrl,
+        response_type: responseType,
+        scope: 'openid email profile',
+        state: appRedirectUri,
+        prompt: 'select_account',
+      });
+      if (responseType === 'code') {
+        params.set('access_type', 'online');
+      }
+
+      res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+    } catch (error: any) {
+      res.status(500).send(error.message || 'Gagal memulai autentikasi Google');
+    }
+  }
+
+  /**
+   * HTTPS OAuth 2.0 callback bridge compliant with Google Web Client ID policy.
+   * Supports BOTH:
+   * - Authorization Code Flow (?code=...&state=<appReturnUrl>) -> exchanges code on server
+   * - Implicit fallback (#access_token=...&state=<appReturnUrl>) -> bridges fragment in browser
+   */
+  async googleOAuthCallback(req: Request, res: Response): Promise<void> {
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    const oauthError = typeof req.query.error === 'string' ? req.query.error : '';
+    const rawState = typeof req.query.state === 'string' ? req.query.state : 'primeteam://google-auth';
+    let appReturnUrl = rawState;
+    try {
+      if (/^(https?|primeteam|exp|exps)%3A/i.test(rawState)) {
+        appReturnUrl = decodeURIComponent(rawState);
+      }
+    } catch {
+      // keep raw
+    }
+    if (!/^(primeteam|exp|exps|https?):\/\//i.test(appReturnUrl)) {
+      appReturnUrl = 'primeteam://google-auth';
+    }
+
+    let resolvedHash = '';
+    if (oauthError) {
+      resolvedHash = `error=${encodeURIComponent(oauthError)}`;
+    } else if (code) {
+      try {
+        const secrets = await settingsService.getAdminSecrets();
+        const clientId = (secrets.google_oauth_client_id || '').trim();
+        const clientSecret = (secrets.google_oauth_client_secret || '').trim();
+        const proto = (req.headers['x-forwarded-proto'] as string)?.split(',')[0]?.trim() || req.protocol || 'https';
+        const host = req.get('host');
+        const httpsCallbackUrl = `${proto}://${host}/api/v1/auth/google/callback`;
+
+        const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            code,
+            client_id: clientId,
+            client_secret: clientSecret,
+            redirect_uri: httpsCallbackUrl,
+            grant_type: 'authorization_code',
+          }).toString(),
+        });
+        const tokenJson: any = await tokenRes.json();
+        if (tokenJson.access_token || tokenJson.id_token) {
+          const hp = new URLSearchParams();
+          if (tokenJson.access_token) hp.set('access_token', tokenJson.access_token);
+          if (tokenJson.id_token) hp.set('id_token', tokenJson.id_token);
+          resolvedHash = hp.toString();
+        } else {
+          resolvedHash = `error=${encodeURIComponent(tokenJson.error_description || tokenJson.error || 'token_exchange_failed')}`;
+        }
+      } catch (err: any) {
+        resolvedHash = `error=${encodeURIComponent(err?.message || 'token_exchange_error')}`;
+      }
+    }
+
+    const serverRedirectTarget = resolvedHash ? `${appReturnUrl}#${resolvedHash}` : '';
+
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(`<!DOCTYPE html>
 <html lang="id">
@@ -82,19 +176,24 @@ export class AuthController {
 </head>
 <body>
   <div class="card">
-    <h3 style="margin:0 0 8px 0;">Autentikasi Google Berhasil</h3>
+    <h3 style="margin:0 0 8px 0;">Autentikasi Google Diproses</h3>
     <p>Sedang mengarahkan kembali ke aplikasi PrimeTeam...</p>
-    <a id="openAppBtn" class="btn" href="primeteam://google-auth">Buka Aplikasi</a>
+    <a id="openAppBtn" class="btn" href="${serverRedirectTarget || appReturnUrl}">Buka Aplikasi</a>
   </div>
   <script>
     (function() {
+      var serverTarget = ${JSON.stringify(serverRedirectTarget)};
+      if (serverTarget) {
+        window.location.replace(serverTarget);
+        return;
+      }
       var hash = window.location.hash ? window.location.hash.replace(/^#/, '') : '';
       var query = window.location.search ? window.location.search.replace(/^\\?/, '') : '';
       var params = new URLSearchParams(hash || query);
       var rawState = params.get('state') || 'primeteam://google-auth';
       var appReturnUrl = rawState;
       try {
-        if (/^https?%3A|^primeteam%3A|^exp%3A/i.test(rawState)) {
+        if (/^(https?|primeteam|exp|exps)%3A/i.test(rawState)) {
           appReturnUrl = decodeURIComponent(rawState);
         }
       } catch (e) {}
