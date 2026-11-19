@@ -155,36 +155,114 @@ export class ProjectController {
             sendError(res, error.message || 'Gagal mengirim pesan', 400);
         }
     }
-    async deleteProjectFile(req, res) {
+    async editProjectFile(req, res) {
         try {
             if (!req.user || (!isAdminOrSuperAdmin(req.user) && !isPicRole(req.user))) {
-                sendError(res, 'Akses ditolak: Hanya role PIC atau Admin yang dapat menghapus berkas project.', 403);
+                sendError(res, 'Akses ditolak: Hanya role PIC atau Admin yang dapat mengedit berkas project.', 403);
+                return;
+            }
+            const projectId = parseInt(req.params.id, 10);
+            const fileId = parseInt(req.params.fileId, 10);
+            const description = String(req.body?.description || '').trim();
+            const isAdmin = isAdminOrSuperAdmin(req.user);
+            const result = await projectService.editProjectFile(projectId, fileId, req.user.id, isAdmin, description);
+            sendSuccess(res, result, 'Berkas project berhasil diperbarui');
+        }
+        catch (error) {
+            sendError(res, error.message || 'Gagal mengedit berkas project', 400);
+        }
+    }
+    async deleteProjectFile(req, res) {
+        try {
+            if (!req.user || !canWriteInProject(req.user)) {
+                sendError(res, 'Akses ditolak: Role Client hanya memiliki akses baca (Read-Only).', 403);
                 return;
             }
             const projectId = parseInt(req.params.id, 10);
             const fileId = parseInt(req.params.fileId, 10);
             const isAdmin = isAdminOrSuperAdmin(req.user);
-            const result = await projectService.deleteProjectFile(projectId, fileId, req.user.id, isAdmin);
+            const canManageAll = isAdmin || isPicRole(req.user);
+            const result = await projectService.deleteProjectFile(projectId, fileId, req.user.id, isAdmin, canManageAll);
             sendSuccess(res, result, 'Berkas project berhasil dihapus');
         }
         catch (error) {
-            sendError(res, error.message || 'Gagal menghapus berkas project', 400);
+            sendError(res, error.message || 'Gagal menghapus berkas project', 403);
+        }
+    }
+    async editProjectComment(req, res) {
+        try {
+            if (!req.user || (!isAdminOrSuperAdmin(req.user) && !isPicRole(req.user))) {
+                sendError(res, 'Akses ditolak: Hanya role PIC atau Admin yang dapat mengedit komentar project.', 403);
+                return;
+            }
+            const projectId = parseInt(req.params.id, 10);
+            const commentId = parseInt(req.params.commentId, 10);
+            const description = String(req.body?.description || '').trim();
+            if (!description) {
+                sendError(res, 'Isi komentar wajib diisi', 400);
+                return;
+            }
+            const isAdmin = isAdminOrSuperAdmin(req.user);
+            const result = await projectService.editProjectComment(projectId, commentId, req.user.id, isAdmin, description);
+            sendSuccess(res, result, 'Komentar project berhasil diperbarui');
+        }
+        catch (error) {
+            sendError(res, error.message || 'Gagal mengedit komentar project', 400);
         }
     }
     async deleteProjectComment(req, res) {
         try {
-            if (!req.user || (!isAdminOrSuperAdmin(req.user) && !isPicRole(req.user))) {
-                sendError(res, 'Akses ditolak: Hanya role PIC atau Admin yang dapat menghapus komentar project.', 403);
+            if (!req.user || !canWriteInProject(req.user)) {
+                sendError(res, 'Akses ditolak: Role Client hanya memiliki akses baca (Read-Only).', 403);
                 return;
             }
             const projectId = parseInt(req.params.id, 10);
             const commentId = parseInt(req.params.commentId, 10);
             const isAdmin = isAdminOrSuperAdmin(req.user);
-            const result = await projectService.deleteProjectComment(projectId, commentId, req.user.id, isAdmin);
+            const canManageAll = isAdmin || isPicRole(req.user);
+            const result = await projectService.deleteProjectComment(projectId, commentId, req.user.id, isAdmin, canManageAll);
             sendSuccess(res, result, 'Komentar project berhasil dihapus');
         }
         catch (error) {
-            sendError(res, error.message || 'Gagal menghapus komentar project', 400);
+            sendError(res, error.message || 'Gagal menghapus komentar project', 403);
+        }
+    }
+    async editProjectChat(req, res) {
+        try {
+            if (!req.user || (!isAdminOrSuperAdmin(req.user) && !isPicRole(req.user))) {
+                sendError(res, 'Akses ditolak: Hanya role PIC atau Admin yang dapat mengedit pesan chat.', 403);
+                return;
+            }
+            const projectId = parseInt(req.params.id, 10);
+            const messageId = parseInt(req.params.messageId, 10);
+            const message = String(req.body?.message || '').trim();
+            if (!message) {
+                sendError(res, 'Isi pesan wajib diisi', 400);
+                return;
+            }
+            const isAdmin = isAdminOrSuperAdmin(req.user);
+            const result = await projectService.editProjectChatMessage(projectId, messageId, req.user.id, isAdmin, message);
+            sendSuccess(res, result, 'Pesan chat berhasil diperbarui');
+        }
+        catch (error) {
+            sendError(res, error.message || 'Gagal mengedit pesan chat', 400);
+        }
+    }
+    async deleteProjectChat(req, res) {
+        try {
+            if (!req.user || !canWriteInProject(req.user)) {
+                sendError(res, 'Akses ditolak: Role Client hanya memiliki akses baca (Read-Only).', 403);
+                return;
+            }
+            const projectId = parseInt(req.params.id, 10);
+            const messageId = parseInt(req.params.messageId, 10);
+            const isAdmin = isAdminOrSuperAdmin(req.user);
+            const canManageAll = isAdmin || isPicRole(req.user);
+            const result = await projectService.deleteProjectChatMessage(projectId, messageId, req.user.id, isAdmin, canManageAll);
+            sendSuccess(res, result, 'Pesan chat berhasil dihapus');
+        }
+        catch (error) {
+            sendError(res, error.message || 'Gagal menghapus pesan chat', 403);
         }
     }
 }

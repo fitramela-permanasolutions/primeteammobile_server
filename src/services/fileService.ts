@@ -533,8 +533,23 @@ export class FileService {
     return { id: fileId, type, folder_id: folderId };
   }
 
-  async deleteFile(fileId: number, type: 'project' | 'general') {
+  async deleteFile(
+    fileId: number,
+    type: 'project' | 'general',
+    userId?: number,
+    canManageAll = true
+  ) {
     const tbl = type === 'project' ? table('project_files') : table('general_files');
+    if (!canManageAll && userId) {
+      const [rows] = await pool.query<RowDataPacket[]>(
+        `SELECT uploaded_by FROM ${tbl} WHERE id = ? AND deleted = 0 LIMIT 1`,
+        [fileId]
+      );
+      if (rows.length === 0) throw new Error('Berkas tidak ditemukan');
+      if (Number(rows[0].uploaded_by) !== Number(userId)) {
+        throw new Error('Akses ditolak: Anda hanya dapat menghapus berkas yang Anda unggah sendiri.');
+      }
+    }
     await pool.query(`UPDATE ${tbl} SET deleted = 1 WHERE id = ?`, [fileId]);
     return { id: fileId, type, deleted: true };
   }

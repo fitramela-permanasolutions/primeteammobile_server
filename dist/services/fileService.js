@@ -402,8 +402,16 @@ export class FileService {
         await pool.query(`UPDATE ${tbl} SET folder_id = ? WHERE id = ?`, [folderId, fileId]);
         return { id: fileId, type, folder_id: folderId };
     }
-    async deleteFile(fileId, type) {
+    async deleteFile(fileId, type, userId, canManageAll = true) {
         const tbl = type === 'project' ? table('project_files') : table('general_files');
+        if (!canManageAll && userId) {
+            const [rows] = await pool.query(`SELECT uploaded_by FROM ${tbl} WHERE id = ? AND deleted = 0 LIMIT 1`, [fileId]);
+            if (rows.length === 0)
+                throw new Error('Berkas tidak ditemukan');
+            if (Number(rows[0].uploaded_by) !== Number(userId)) {
+                throw new Error('Akses ditolak: Anda hanya dapat menghapus berkas yang Anda unggah sendiri.');
+            }
+        }
         await pool.query(`UPDATE ${tbl} SET deleted = 1 WHERE id = ?`, [fileId]);
         return { id: fileId, type, deleted: true };
     }

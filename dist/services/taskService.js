@@ -376,5 +376,69 @@ export class TaskService {
         }
         return this.getTaskById(taskId, userId, true);
     }
+    async updateTask(taskId, userId, input) {
+        const sets = [];
+        const params = [];
+        if (input.title !== undefined && input.title.trim()) {
+            sets.push('title = ?');
+            params.push(input.title.trim());
+        }
+        if (input.description !== undefined) {
+            sets.push('description = ?');
+            params.push(input.description.trim());
+        }
+        if (input.deadline !== undefined) {
+            sets.push('deadline = ?');
+            params.push(input.deadline || null);
+        }
+        if (input.priority_id !== undefined && Number(input.priority_id) > 0) {
+            sets.push('priority_id = ?');
+            params.push(Number(input.priority_id));
+        }
+        if (sets.length === 0) {
+            throw new Error('Tidak ada perubahan yang dikirim');
+        }
+        params.push(taskId);
+        const [result] = await pool.query(`UPDATE ${table('tasks')} SET ${sets.join(', ')} WHERE id = ? AND deleted = 0`, params);
+        if (result.affectedRows === 0) {
+            throw new Error('Task tidak ditemukan');
+        }
+        return this.getTaskById(taskId, userId, true);
+    }
+    async deleteTask(taskId) {
+        const [result] = await pool.query(`UPDATE ${table('tasks')} SET deleted = 1 WHERE id = ? AND deleted = 0`, [taskId]);
+        if (result.affectedRows === 0) {
+            throw new Error('Task tidak ditemukan');
+        }
+        return { id: taskId, deleted: true };
+    }
+    async editTaskComment(taskId, commentId, description) {
+        const cleanDesc = description.trim();
+        const [result] = await pool.query(`UPDATE ${table('project_comments')}
+       SET description = ?
+       WHERE id = ? AND task_id = ? AND deleted = 0`, [`<p>${cleanDesc}</p>`, commentId, taskId]);
+        if (result.affectedRows === 0) {
+            throw new Error('Komentar tidak ditemukan');
+        }
+        pusherService
+            .triggerTaskComment(taskId, { action: 'edit', id: commentId, description: cleanDesc })
+            .catch(() => { });
+        return { id: commentId, task_id: taskId, description: cleanDesc };
+    }
+    async deleteTaskComment(taskId, commentId, userId, canManageAll) {
+        const [rows] = await pool.query(`SELECT id, created_by FROM ${table('project_comments')}
+       WHERE id = ? AND task_id = ? AND deleted = 0 LIMIT 1`, [commentId, taskId]);
+        if (rows.length === 0) {
+            throw new Error('Komentar tidak ditemukan');
+        }
+        if (!canManageAll && Number(rows[0].created_by) !== Number(userId)) {
+            throw new Error('Akses ditolak: Anda hanya dapat menghapus komentar yang Anda buat sendiri.');
+        }
+        await pool.query(`UPDATE ${table('project_comments')} SET deleted = 1 WHERE id = ?`, [commentId]);
+        pusherService
+            .triggerTaskComment(taskId, { action: 'delete', id: commentId })
+            .catch(() => { });
+        return { id: commentId, deleted: true };
+    }
 }
 export const taskService = new TaskService();

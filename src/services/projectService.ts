@@ -612,8 +612,38 @@ export class ProjectService {
     return chatPayload;
   }
 
-  async deleteProjectFile(projectId: number, fileId: number, userId: number, isAdmin: boolean) {
+  async editProjectFile(
+    projectId: number,
+    fileId: number,
+    userId: number,
+    isAdmin: boolean,
+    description: string
+  ) {
     await this.assertProjectAccess(projectId, userId, isAdmin);
+    await pool.query(
+      `UPDATE ${table('project_files')} SET description = ? WHERE id = ? AND project_id = ? AND deleted = 0`,
+      [description.trim(), fileId, projectId]
+    );
+    return { id: fileId, description: description.trim() };
+  }
+
+  async deleteProjectFile(
+    projectId: number,
+    fileId: number,
+    userId: number,
+    isAdmin: boolean,
+    canManageAll: boolean
+  ) {
+    await this.assertProjectAccess(projectId, userId, isAdmin);
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, uploaded_by FROM ${table('project_files')}
+       WHERE id = ? AND project_id = ? AND deleted = 0 LIMIT 1`,
+      [fileId, projectId]
+    );
+    if (rows.length === 0) throw new Error('Berkas tidak ditemukan');
+    if (!canManageAll && Number(rows[0].uploaded_by) !== Number(userId)) {
+      throw new Error('Akses ditolak: Anda hanya dapat menghapus berkas yang Anda unggah sendiri.');
+    }
     await pool.query(
       `UPDATE ${table('project_files')} SET deleted = 1 WHERE id = ? AND project_id = ?`,
       [fileId, projectId]
@@ -621,13 +651,102 @@ export class ProjectService {
     return { id: fileId, deleted: true };
   }
 
-  async deleteProjectComment(projectId: number, commentId: number, userId: number, isAdmin: boolean) {
+  async editProjectComment(
+    projectId: number,
+    commentId: number,
+    userId: number,
+    isAdmin: boolean,
+    description: string
+  ) {
     await this.assertProjectAccess(projectId, userId, isAdmin);
+    const cleanDesc = description.trim();
+    await pool.query(
+      `UPDATE ${table('project_comments')}
+       SET description = ?
+       WHERE id = ? AND project_id = ? AND task_id = 0 AND deleted = 0`,
+      [`<p>${cleanDesc}</p>`, commentId, projectId]
+    );
+    pusherService
+      .triggerProjectComment(projectId, { action: 'edit', id: commentId, description: cleanDesc })
+      .catch(() => {});
+    return { id: commentId, description: cleanDesc };
+  }
+
+  async deleteProjectComment(
+    projectId: number,
+    commentId: number,
+    userId: number,
+    isAdmin: boolean,
+    canManageAll: boolean
+  ) {
+    await this.assertProjectAccess(projectId, userId, isAdmin);
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, created_by FROM ${table('project_comments')}
+       WHERE id = ? AND project_id = ? AND task_id = 0 AND deleted = 0 LIMIT 1`,
+      [commentId, projectId]
+    );
+    if (rows.length === 0) throw new Error('Komentar tidak ditemukan');
+    if (!canManageAll && Number(rows[0].created_by) !== Number(userId)) {
+      throw new Error('Akses ditolak: Anda hanya dapat menghapus komentar yang Anda buat sendiri.');
+    }
     await pool.query(
       `UPDATE ${table('project_comments')} SET deleted = 1 WHERE id = ? AND project_id = ? AND task_id = 0`,
       [commentId, projectId]
     );
+    pusherService
+      .triggerProjectComment(projectId, { action: 'delete', id: commentId })
+      .catch(() => {});
     return { id: commentId, deleted: true };
+  }
+
+  async editProjectChatMessage(
+    projectId: number,
+    messageId: number,
+    userId: number,
+    isAdmin: boolean,
+    message: string
+  ) {
+    await this.assertProjectAccess(projectId, userId, isAdmin);
+    await this.ensureProjectChatTable();
+    const cleanMsg = message.trim();
+    await pool.query(
+      `UPDATE ${table('project_chat_messages')}
+       SET message = ?
+       WHERE id = ? AND project_id = ? AND deleted = 0`,
+      [cleanMsg, messageId, projectId]
+    );
+    pusherService
+      .triggerProjectChat(projectId, { action: 'edit', id: messageId, message: cleanMsg })
+      .catch(() => {});
+    return { id: messageId, message: cleanMsg };
+  }
+
+  async deleteProjectChatMessage(
+    projectId: number,
+    messageId: number,
+    userId: number,
+    isAdmin: boolean,
+    canManageAll: boolean
+  ) {
+    await this.assertProjectAccess(projectId, userId, isAdmin);
+    await this.ensureProjectChatTable();
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, user_id FROM ${table('project_chat_messages')}
+       WHERE id = ? AND project_id = ? AND deleted = 0 LIMIT 1`,
+      [messageId, projectId]
+    );
+    if (rows.length === 0) throw new Error('Pesan chat tidak ditemukan');
+    if (!canManageAll && Number(rows[0].user_id) !== Number(userId)) {
+      throw new Error('Akses ditolak: Anda hanya dapat menghapus pesan yang Anda kirim sendiri.');
+    }
+    await pool.query(
+      `UPDATE ${table('project_chat_messages')} SET deleted = 1 WHERE id = ? AND project_id = ?`,
+      [messageId, projectId]
+    );
+    pusherService
+      .triggerProjectChat(projectId, { action: 'delete', id: messageId })
+      .catch(() => {});
+    return { id: messageId, deleted: true };
   }
 }
 

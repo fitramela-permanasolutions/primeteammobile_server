@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { fileService } from '../services/fileService.js';
 import { sendSuccess, sendError } from '../utils/response.js';
 import { AuthenticatedRequest } from '../types/index.js';
+import { canWriteInProject, canManageChecklistItem } from '../utils/rbac.js';
 import fs from 'fs';
 
 export class FileController {
@@ -186,12 +187,17 @@ export class FileController {
 
   async deleteFile(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
+      if (!req.user || !canWriteInProject(req.user)) {
+        sendError(res, 'Akses ditolak: Role Client hanya memiliki akses baca (Read-Only).', 403);
+        return;
+      }
       const fileId = parseInt(req.params.id, 10);
       const type = ((req.query.type as string) || 'general') as 'project' | 'general';
-      const deleted = await fileService.deleteFile(fileId, type);
+      const canManageAll = canManageChecklistItem(req.user);
+      const deleted = await fileService.deleteFile(fileId, type, req.user.id, canManageAll);
       sendSuccess(res, deleted, 'File deleted');
     } catch (error: any) {
-      sendError(res, error.message || 'Failed to delete file', 500);
+      sendError(res, error.message || 'Failed to delete file', 403);
     }
   }
 

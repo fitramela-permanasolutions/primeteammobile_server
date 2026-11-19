@@ -194,6 +194,87 @@ export class TaskController {
       sendError(res, error.message || 'Failed to add comment', 500);
     }
   }
+
+  async updateTask(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user || !canManageChecklistItem(req.user)) {
+        sendError(
+          res,
+          'Akses ditolak: Hanya role PIC atau Admin yang dapat mengedit task.',
+          403
+        );
+        return;
+      }
+      const taskId = parseInt(req.params.id, 10);
+      const updated = await taskService.updateTask(taskId, req.user.id, req.body || {});
+      sendSuccess(res, updated, 'Task berhasil diperbarui');
+    } catch (error: any) {
+      sendError(res, error.message || 'Gagal memperbarui task', 400);
+    }
+  }
+
+  async deleteTask(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user || !canManageChecklistItem(req.user)) {
+        sendError(
+          res,
+          'Akses ditolak: Hanya role PIC atau Admin yang dapat menghapus task.',
+          403
+        );
+        return;
+      }
+      const taskId = parseInt(req.params.id, 10);
+      const deleted = await taskService.deleteTask(taskId);
+      sendSuccess(res, deleted, 'Task berhasil dihapus');
+    } catch (error: any) {
+      sendError(res, error.message || 'Gagal menghapus task', 400);
+    }
+  }
+
+  async editComment(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user || !canManageChecklistItem(req.user)) {
+        sendError(
+          res,
+          'Akses ditolak: Hanya role PIC atau Admin yang dapat mengedit komentar.',
+          403
+        );
+        return;
+      }
+      const taskId = parseInt(req.params.id, 10);
+      const commentId = parseInt(req.params.commentId, 10);
+      const description = String(req.body?.description || '').trim();
+      if (!description) {
+        sendError(res, 'Isi komentar wajib diisi', 400);
+        return;
+      }
+      const updated = await taskService.editTaskComment(taskId, commentId, description);
+      sendSuccess(res, updated, 'Komentar berhasil diperbarui');
+    } catch (error: any) {
+      sendError(res, error.message || 'Gagal mengedit komentar', 400);
+    }
+  }
+
+  async deleteComment(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user || !canWriteInProject(req.user)) {
+        sendError(res, 'Akses ditolak: Role Client hanya memiliki akses baca (Read-Only).', 403);
+        return;
+      }
+      const taskId = parseInt(req.params.id, 10);
+      const commentId = parseInt(req.params.commentId, 10);
+      const canManageAll = canManageChecklistItem(req.user);
+      const deleted = await taskService.deleteTaskComment(
+        taskId,
+        commentId,
+        req.user.id,
+        canManageAll
+      );
+      sendSuccess(res, deleted, 'Komentar berhasil dihapus');
+    } catch (error: any) {
+      sendError(res, error.message || 'Gagal menghapus komentar', 403);
+    }
+  }
 }
 
 export const taskController = new TaskController();

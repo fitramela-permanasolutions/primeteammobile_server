@@ -1,5 +1,6 @@
 import { fileService } from '../services/fileService.js';
 import { sendSuccess, sendError } from '../utils/response.js';
+import { canWriteInProject, canManageChecklistItem } from '../utils/rbac.js';
 import fs from 'fs';
 export class FileController {
     async getFiles(req, res) {
@@ -143,13 +144,18 @@ export class FileController {
     }
     async deleteFile(req, res) {
         try {
+            if (!req.user || !canWriteInProject(req.user)) {
+                sendError(res, 'Akses ditolak: Role Client hanya memiliki akses baca (Read-Only).', 403);
+                return;
+            }
             const fileId = parseInt(req.params.id, 10);
             const type = (req.query.type || 'general');
-            const deleted = await fileService.deleteFile(fileId, type);
+            const canManageAll = canManageChecklistItem(req.user);
+            const deleted = await fileService.deleteFile(fileId, type, req.user.id, canManageAll);
             sendSuccess(res, deleted, 'File deleted');
         }
         catch (error) {
-            sendError(res, error.message || 'Failed to delete file', 500);
+            sendError(res, error.message || 'Failed to delete file', 403);
         }
     }
     renderDownloadErrorHtml(res, message, status = 404) {
