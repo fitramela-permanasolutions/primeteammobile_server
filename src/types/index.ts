@@ -12,6 +12,7 @@ export interface UserTokenPayload {
   client_id?: number;
   first_name: string;
   last_name: string;
+  sid?: string;
 }
 
 export interface AuthenticatedRequest extends Request {

@@ -5,6 +5,7 @@ import { pool, table } from '../config/database.js';
 import { sendError } from '../utils/response.js';
 import { RowDataPacket } from 'mysql2';
 import { isAdminOrSuperAdmin, resolveUserRoleTitle } from '../utils/rbac.js';
+import { authService } from '../services/authService.js';
 
 export async function authMiddleware(
   req: AuthenticatedRequest,
@@ -29,6 +30,18 @@ export async function authMiddleware(
     }
 
     const payload = verifyToken(token);
+
+    if (payload.sid) {
+      const isActive = await authService.verifyActiveSession(payload.sid);
+      if (!isActive) {
+        sendError(
+          res,
+          'Sesi Anda telah berakhir atau dihentikan oleh Admin. Silakan login kembali.',
+          401
+        );
+        return;
+      }
+    }
 
     // Verify user in database is active and not deleted, and join role from permana_roles
     const [rows] = await pool.query<RowDataPacket[]>(
@@ -69,6 +82,7 @@ export async function authMiddleware(
       client_id: row.client_id,
       first_name: row.first_name,
       last_name: row.last_name,
+      sid: payload.sid,
     };
 
     next();

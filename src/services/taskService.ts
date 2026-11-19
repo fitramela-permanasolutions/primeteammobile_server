@@ -1,6 +1,33 @@
 import { pool, table } from '../config/database.js';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { resolveCiFile, stripHtml, toIsoUtc } from '../utils/ciHelpers.js';
+import { pusherService } from './pusherService.js';
+
+function buildTaskCommentPhpFiles(file: Express.Multer.File): string {
+  const fn = file.filename;
+  const size = file.size || 0;
+  return `a:1:{i:0;a:4:{s:9:"file_name";s:${Buffer.byteLength(fn)}:"${fn}";s:9:"file_size";i:${size};s:7:"file_id";N;s:12:"service_type";N;}}`;
+}
+
+function parseTaskCommentAttachments(rawFiles: string | null | undefined, projectId: number) {
+  if (!rawFiles || rawFiles === 'a:0:{}') return [];
+  const results: Array<{ file_name: string; original_name: string; url: string; is_image: boolean }> = [];
+  const regex = /s:9:"file_name";s:\d+:"([^"]+)"/g;
+  let match: RegExpExecArray | null;
+  const folder = projectId > 0 ? `project_files/${projectId}` : 'timeline_files';
+  while ((match = regex.exec(rawFiles)) !== null) {
+    const fileName = match[1];
+    const cleanName = fileName.replace(/^_file[a-f0-9]+-/i, '');
+    const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(fileName);
+    results.push({
+      file_name: fileName,
+      original_name: cleanName,
+      url: `/files-static/${folder}/${encodeURIComponent(fileName)}`,
+      is_image: isImage,
+    });
+  }
+  return results;
+}
 
 export interface TaskFilterOptions {
   projectId?: number;
@@ -215,6 +242,7 @@ export class TaskService {
         user_name: authorName,
         author_avatar: cAvatar?.thumbnailUrl || null,
         user_avatar: cAvatar?.thumbnailUrl || null,
+        attachments: parseTaskCommentAttachments(c.files, Number(r.project_id || 0)),
       };
     });
 
@@ -260,12 +288,14 @@ export class TaskService {
        VALUES (?, 0, ?, 1000, 0)`,
       [title.trim(), taskId]
     );
-    return {
+    const created = {
       id: result.insertId,
       title: title.trim(),
       is_checked: false,
       task_id: taskId,
     };
+    pusherService.triggerTaskChecklist(taskId, { action: 'add', item: created }).catch(() => {});
+    return created;
   }
 
   async toggleChecklistItem(itemId: number) {
@@ -282,36 +312,131 @@ export class TaskService {
       [nextChecked, itemId]
     );
 
-    return {
+    const toggled = {
       id: itemId,
       title: rows[0].title,
       is_checked: Boolean(nextChecked),
       task_id: rows[0].task_id,
     };
+    pusherService
+      .triggerTaskChecklist(Number(rows[0].task_id), { action: 'toggle', item: toggled })
+      .catch(() => {});
+    return toggled;
   }
 
-  async addTaskComment(taskId: number, userId: number, description: string) {
+  async editChecklistItem(itemId: number, title: string) {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, is_checked, task_id FROM ${table('checklist_items')}
+       WHERE id = ? AND deleted = 0 LIMIT 1`,
+      [itemId]
+    );
+    if (rows.length === 0) throw new Error('Checklist item tidak ditemukan');
+
+    const cleanTitle = title.trim();
+    await pool.query(
+      `UPDATE ${table('checklist_items')} SET title = ? WHERE id = ?`,
+      [cleanTitle, itemId]
+    );
+
+    const updated = {
+      id: itemId,
+      title: cleanTitle,
+      is_checked: Boolean(rows[0].is_checked),
+      task_id: rows[0].task_id,
+    };
+    pusherService
+      .triggerTaskChecklist(Number(rows[0].task_id), { action: 'edit', item: updated })
+      .catch(() => {});
+    return updated;
+  }
+
+  async deleteChecklistItem(itemId: number) {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, task_id FROM ${table('checklist_items')}
+       WHERE id = ? AND deleted = 0 LIMIT 1`,
+      [itemId]
+    );
+    if (rows.length === 0) throw new Error('Checklist item tidak ditemukan');
+
+    await pool.query(
+      `UPDATE ${table('checklist_items')} SET deleted = 1 WHERE id = ?`,
+      [itemId]
+    );
+    pusherService
+      .triggerTaskChecklist(Number(rows[0].task_id), { action: 'delete', itemId })
+      .catch(() => {});
+    return { id: itemId, deleted: true };
+  }
+
+  async addTaskComment(
+    taskId: number,
+    userId: number,
+    description: string,
+    file?: Express.Multer.File
+  ) {
     const [taskRows] = await pool.query<RowDataPacket[]>(
-      `SELECT project_id FROM ${table('tasks')} WHERE id = ? LIMIT 1`,
+      `SELECT project_id, title, assigned_to, collaborators FROM ${table('tasks')} WHERE id = ? LIMIT 1`,
       [taskId]
     );
-    const projectId = taskRows.length > 0 ? taskRows[0].project_id : 0;
+    const projectId = taskRows.length > 0 ? Number(taskRows[0].project_id || 0) : 0;
+    const taskTitle = String(taskRows[0]?.title || 'Task').trim();
+    const serializedFiles = file ? buildTaskCommentPhpFiles(file) : 'a:0:{}';
+    const cleanDesc = description.trim() || (file ? `Lampiran: ${file.originalname}` : '');
 
     const [result] = await pool.query<ResultSetHeader>(
       `INSERT INTO ${table('project_comments')}
        (created_by, created_at, description, project_id, comment_id, task_id, file_id, customer_feedback_id, files, deleted)
-       VALUES (?, UTC_TIMESTAMP(), ?, ?, 0, ?, 0, 0, 'a:0:{}', 0)`,
-      [userId, `<p>${description.trim()}</p>`, projectId, taskId]
+       VALUES (?, UTC_TIMESTAMP(), ?, ?, 0, ?, 0, 0, ?, 0)`,
+      [userId, `<p>${cleanDesc}</p>`, projectId, taskId, serializedFiles]
     );
 
-    return {
+    const [userRows] = await pool.query<RowDataPacket[]>(
+      `SELECT CONCAT(first_name, ' ', last_name) AS name, image FROM ${table('users')} WHERE id = ? LIMIT 1`,
+      [userId]
+    );
+    const authorName = String(userRows[0]?.name || '').trim() || 'User';
+    const avatar = resolveCiFile(userRows[0]?.image, 'profile_images');
+
+    const commentPayload = {
       id: result.insertId,
       task_id: taskId,
       project_id: projectId,
-      description: description.trim(),
+      description: cleanDesc,
       created_by: userId,
+      author_name: authorName,
+      user_name: authorName,
+      author_avatar: avatar?.thumbnailUrl || null,
+      user_avatar: avatar?.thumbnailUrl || null,
       created_at: new Date().toISOString(),
+      attachments: parseTaskCommentAttachments(serializedFiles, projectId),
     };
+
+    pusherService.triggerTaskComment(taskId, commentPayload).catch(() => {});
+
+    // Notify task assignee & collaborators
+    const recipients = new Set<number>();
+    if (taskRows[0]?.assigned_to) recipients.add(Number(taskRows[0].assigned_to));
+    if (taskRows[0]?.collaborators) {
+      String(taskRows[0].collaborators)
+        .split(',')
+        .map((x) => Number(x.trim()))
+        .filter((n) => n > 0)
+        .forEach((n) => recipients.add(n));
+    }
+    recipients.delete(userId);
+    if (recipients.size > 0) {
+      pusherService
+        .notifyUsers(Array.from(recipients), {
+          title: `Komentar Task • ${authorName}`,
+          message: `${taskTitle}: ${cleanDesc}`,
+          task_id: taskId,
+          project_id: projectId,
+          type: 'task_comment',
+        })
+        .catch(() => {});
+    }
+
+    return commentPayload;
   }
 
   async updateTaskStatus(taskId: number, statusId: number, userId: number) {

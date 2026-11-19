@@ -26,20 +26,18 @@ export class SettingsController {
             sendError(res, error.message || 'Failed to fetch platform settings', 500);
         }
     }
+    async getAdminSecrets(req, res) {
+        try {
+            const secrets = await settingsService.getAdminSecrets();
+            sendSuccess(res, secrets, 'Admin settings retrieved');
+        }
+        catch (error) {
+            sendError(res, error.message || 'Failed to fetch admin settings', 500);
+        }
+    }
     async updatePlatformSettings(req, res) {
         try {
-            const { default_theme_color, pwa_theme_color, app_title, footer_copyright_text, upload_doc_path, web_app_url, prevent_screenshot, show_logo_in_signin_page, show_background_image_in_signin_page, } = req.body;
-            const updated = await settingsService.updatePlatformSettings({
-                default_theme_color,
-                pwa_theme_color,
-                app_title,
-                footer_copyright_text,
-                upload_doc_path,
-                web_app_url,
-                prevent_screenshot,
-                show_logo_in_signin_page,
-                show_background_image_in_signin_page,
-            });
+            const updated = await settingsService.updatePlatformSettings(req.body || {});
             sendSuccess(res, withAbsoluteMediaUrls(req, updated), 'Platform settings updated');
         }
         catch (error) {

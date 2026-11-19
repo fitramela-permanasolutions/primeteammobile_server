@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { taskController } from '../controllers/taskController.js';
 import { authMiddleware } from '../middlewares/authMiddleware.js';
+import { upload, validateUploadSize } from '../middlewares/uploadMiddleware.js';
 
 const router = Router();
 
@@ -15,6 +16,12 @@ router.post('/:id/checklist', (req, res) => taskController.addChecklistItem(req,
 router.post('/:id/checklists', (req, res) => taskController.addChecklistItem(req, res));
 router.patch('/checklist/:itemId/toggle', (req, res) => taskController.toggleChecklistItem(req, res));
 router.patch('/checklists/:itemId/toggle', (req, res) => taskController.toggleChecklistItem(req, res));
-router.post('/:id/comments', (req, res) => taskController.addComment(req, res));
+router.put('/checklist/:itemId', (req, res) => taskController.editChecklistItem(req, res));
+router.put('/checklists/:itemId', (req, res) => taskController.editChecklistItem(req, res));
+router.delete('/checklist/:itemId', (req, res) => taskController.deleteChecklistItem(req, res));
+router.delete('/checklists/:itemId', (req, res) => taskController.deleteChecklistItem(req, res));
+router.post('/:id/comments', upload.single('file'), validateUploadSize, (req, res) =>
+  taskController.addComment(req, res)
+);
 
 export default router;

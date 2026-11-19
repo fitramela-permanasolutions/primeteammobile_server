@@ -1,5 +1,6 @@
 import { taskService } from '../services/taskService.js';
 import { sendSuccess, sendError } from '../utils/response.js';
+import { canWriteInProject, canManageChecklistItem } from '../utils/rbac.js';
 export class TaskController {
     async getStatuses(req, res) {
         try {
@@ -69,6 +70,10 @@ export class TaskController {
                 sendError(res, 'Unauthorized', 401);
                 return;
             }
+            if (!canWriteInProject(req.user)) {
+                sendError(res, 'Akses ditolak: Role Client hanya memiliki akses baca (Read-Only).', 403);
+                return;
+            }
             const taskId = parseInt(req.params.id, 10);
             const { statusId } = req.body;
             if (isNaN(taskId) || !statusId) {
@@ -84,6 +89,10 @@ export class TaskController {
     }
     async addChecklistItem(req, res) {
         try {
+            if (!req.user || !canWriteInProject(req.user)) {
+                sendError(res, 'Akses ditolak: Role Client tidak dapat menambahkan item checklist.', 403);
+                return;
+            }
             const taskId = parseInt(req.params.id, 10);
             const { title } = req.body;
             if (!title || !String(title).trim()) {
@@ -99,6 +108,10 @@ export class TaskController {
     }
     async toggleChecklistItem(req, res) {
         try {
+            if (!req.user || !canWriteInProject(req.user)) {
+                sendError(res, 'Akses ditolak: Role Client hanya memiliki akses baca (Read-Only).', 403);
+                return;
+            }
             const itemId = parseInt(req.params.itemId, 10);
             const toggled = await taskService.toggleChecklistItem(itemId);
             sendSuccess(res, toggled, 'Checklist item toggled');
@@ -107,19 +120,56 @@ export class TaskController {
             sendError(res, error.message || 'Failed to toggle checklist item', 500);
         }
     }
+    async editChecklistItem(req, res) {
+        try {
+            if (!req.user || !canManageChecklistItem(req.user)) {
+                sendError(res, 'Akses ditolak: Hanya role PIC atau Admin yang dapat mengedit item checklist.', 403);
+                return;
+            }
+            const itemId = parseInt(req.params.itemId, 10);
+            const { title } = req.body;
+            if (!title || !String(title).trim()) {
+                sendError(res, 'Judul checklist wajib diisi', 400);
+                return;
+            }
+            const updated = await taskService.editChecklistItem(itemId, String(title));
+            sendSuccess(res, updated, 'Checklist item updated');
+        }
+        catch (error) {
+            sendError(res, error.message || 'Failed to edit checklist item', 400);
+        }
+    }
+    async deleteChecklistItem(req, res) {
+        try {
+            if (!req.user || !canManageChecklistItem(req.user)) {
+                sendError(res, 'Akses ditolak: Hanya role PIC atau Admin yang dapat menghapus item checklist.', 403);
+                return;
+            }
+            const itemId = parseInt(req.params.itemId, 10);
+            const deleted = await taskService.deleteChecklistItem(itemId);
+            sendSuccess(res, deleted, 'Checklist item deleted');
+        }
+        catch (error) {
+            sendError(res, error.message || 'Failed to delete checklist item', 400);
+        }
+    }
     async addComment(req, res) {
         try {
             if (!req.user) {
                 sendError(res, 'Unauthorized', 401);
                 return;
             }
-            const taskId = parseInt(req.params.id, 10);
-            const { description } = req.body;
-            if (!description || !String(description).trim()) {
-                sendError(res, 'Isi komentar wajib diisi', 400);
+            if (!canWriteInProject(req.user)) {
+                sendError(res, 'Akses ditolak: Role Client hanya memiliki akses baca (Read-Only).', 403);
                 return;
             }
-            const comment = await taskService.addTaskComment(taskId, req.user.id, String(description));
+            const taskId = parseInt(req.params.id, 10);
+            const description = String(req.body?.description || '').trim();
+            if (!description && !req.file) {
+                sendError(res, 'Isi komentar atau lampiran wajib diisi', 400);
+                return;
+            }
+            const comment = await taskService.addTaskComment(taskId, req.user.id, description, req.file);
             sendSuccess(res, comment, 'Comment added', 201);
         }
         catch (error) {

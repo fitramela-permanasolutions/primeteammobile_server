@@ -5,6 +5,8 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { parsePhpSerializedArray, resolveCiFile } from '../utils/ciHelpers.js';
 import { googleDriveService } from './googleDriveService.js';
+import { pusherService } from './pusherService.js';
+import { invalidateCloudflarePolicyCache } from '../middlewares/cloudflareMiddleware.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -79,6 +81,26 @@ export class SettingsService {
       'upload_doc_path',
       'web_app_url',
       'prevent_screenshot',
+      'cloudflare_enabled',
+      'cloudflare_proxy_secret',
+      'cloudflare_turnstile_site_key',
+      'cloudflare_turnstile_secret_key',
+      'allow_rooted_device',
+      'mobile_session_timeout_hours',
+      'show_web_portal_url',
+      'project_terminology',
+      'enable_push_notification',
+      'enable_chat_via_pusher',
+      'pusher_app_id',
+      'pusher_key',
+      'pusher_cluster',
+      'max_upload_size',
+      'max_file_size',
+      'show_todo',
+      'show_kanban',
+      'show_attendance',
+      'google_oauth_client_id',
+      'google_drive_client_id',
     ];
 
     const placeholders = keys.map(() => '?').join(', ');
@@ -167,11 +189,39 @@ export class SettingsService {
     const parsedPlugins = parsePhpSerializedArray(map.plugins || '') || {};
     const uploadDocPath = (map.upload_doc_path || defaultUploadDocPath).trim();
     const webAppUrl = (map.web_app_url || 'https://indodefence.net').trim().replace(/\/+$/, '');
+    const maxUploadSize = Math.max(
+      1,
+      Number(map.max_upload_size || map.max_file_size || 25) || 25
+    );
+    const sessionTimeoutHours = Math.max(
+      1,
+      Number(map.mobile_session_timeout_hours || 168) || 168
+    );
 
     return {
       app_title: map.app_title || 'Indodefence ( IDD )',
       web_app_url: webAppUrl,
+      show_web_portal_url: map.show_web_portal_url !== '0',
       prevent_screenshot: map.prevent_screenshot === '1',
+      cloudflare_enabled: map.cloudflare_enabled === '1',
+      cloudflare_turnstile_site_key: (map.cloudflare_turnstile_site_key || '').trim(),
+      allow_rooted_device: map.allow_rooted_device !== '0',
+      mobile_session_timeout_hours: sessionTimeoutHours,
+      project_terminology: map.project_terminology === 'department' ? 'department' : 'project',
+      enable_push_notification: map.enable_push_notification === '1',
+      enable_chat_via_pusher: map.enable_chat_via_pusher !== '0',
+      pusher_key: (map.pusher_key || '').trim(),
+      pusher_cluster: (map.pusher_cluster || 'ap1').trim(),
+      max_upload_size: maxUploadSize,
+      show_todo: map.show_todo !== '0',
+      show_kanban: map.show_kanban !== '0',
+      show_attendance: map.show_attendance !== '0',
+      google_oauth_client_id: (
+        map.google_oauth_client_id ||
+        process.env.GOOGLE_CLIENT_ID ||
+        map.google_drive_client_id ||
+        ''
+      ).trim(),
       enable_footer: map.enable_footer !== '0',
       footer_copyright_text: map.footer_copyright_text || 'Medianusa Permana',
       default_theme_color: rawThemeColor,
@@ -357,6 +407,70 @@ export class SettingsService {
     return this.getPlatformSettings();
   }
 
+  async getAdminSecrets() {
+    const keys = [
+      'cloudflare_enabled',
+      'cloudflare_proxy_secret',
+      'cloudflare_turnstile_site_key',
+      'cloudflare_turnstile_secret_key',
+      'enable_push_notification',
+      'enable_chat_via_pusher',
+      'pusher_app_id',
+      'pusher_key',
+      'pusher_secret',
+      'pusher_cluster',
+      'google_oauth_client_id',
+    ];
+    const placeholders = keys.map(() => '?').join(', ');
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT setting_name, setting_value
+       FROM ${table('settings')}
+       WHERE setting_name IN (${placeholders}) AND deleted = 0`,
+      keys
+    );
+    const map: Record<string, string> = {};
+    for (const r of rows) map[r.setting_name] = r.setting_value ?? '';
+    return {
+      cloudflare_enabled: map.cloudflare_enabled === '1',
+      cloudflare_proxy_secret: map.cloudflare_proxy_secret || '',
+      cloudflare_turnstile_site_key: map.cloudflare_turnstile_site_key || '',
+      cloudflare_turnstile_secret_key: map.cloudflare_turnstile_secret_key || '',
+      enable_push_notification: map.enable_push_notification === '1',
+      enable_chat_via_pusher: map.enable_chat_via_pusher !== '0',
+      pusher_app_id: map.pusher_app_id || '',
+      pusher_key: map.pusher_key || '',
+      pusher_secret: map.pusher_secret || '',
+      pusher_cluster: map.pusher_cluster || 'ap1',
+      google_oauth_client_id: map.google_oauth_client_id || process.env.GOOGLE_CLIENT_ID || '',
+    };
+  }
+
+  async getMaxUploadSizeBytes(): Promise<number> {
+    try {
+      const [rows] = await pool.query<RowDataPacket[]>(
+        `SELECT setting_value FROM ${table('settings')}
+         WHERE setting_name IN ('max_upload_size', 'max_file_size') AND deleted = 0
+         ORDER BY FIELD(setting_name, 'max_upload_size', 'max_file_size') ASC LIMIT 1`
+      );
+      const mb = Math.max(1, Number(rows[0]?.setting_value || 25) || 25);
+      return mb * 1024 * 1024;
+    } catch {
+      return 25 * 1024 * 1024;
+    }
+  }
+
+  async getMobileSessionTimeoutHours(): Promise<number> {
+    try {
+      const [rows] = await pool.query<RowDataPacket[]>(
+        `SELECT setting_value FROM ${table('settings')}
+         WHERE setting_name = 'mobile_session_timeout_hours' AND deleted = 0 LIMIT 1`
+      );
+      return Math.max(1, Number(rows[0]?.setting_value || 168) || 168);
+    } catch {
+      return 168;
+    }
+  }
+
   async updatePlatformSettings(input: {
     default_theme_color?: string;
     pwa_theme_color?: string;
@@ -364,11 +478,32 @@ export class SettingsService {
     footer_copyright_text?: string;
     upload_doc_path?: string;
     web_app_url?: string;
+    show_web_portal_url?: boolean | string;
     prevent_screenshot?: boolean | string;
+    cloudflare_enabled?: boolean | string;
+    cloudflare_proxy_secret?: string;
+    cloudflare_turnstile_site_key?: string;
+    cloudflare_turnstile_secret_key?: string;
+    allow_rooted_device?: boolean | string;
+    mobile_session_timeout_hours?: number | string;
+    project_terminology?: string;
+    enable_push_notification?: boolean | string;
+    enable_chat_via_pusher?: boolean | string;
+    pusher_app_id?: string;
+    pusher_key?: string;
+    pusher_secret?: string;
+    pusher_cluster?: string;
+    max_upload_size?: number | string;
+    show_todo?: boolean | string;
+    show_kanban?: boolean | string;
+    show_attendance?: boolean | string;
+    google_oauth_client_id?: string;
     show_logo_in_signin_page?: boolean | string;
     show_background_image_in_signin_page?: boolean | string;
   }) {
     const updates: Array<[string, string]> = [];
+    const toBit = (v: boolean | string) =>
+      v === true || v === '1' || v === 'yes' || v === 'true' ? '1' : '0';
 
     if (input.default_theme_color) {
       const cleanCode = input.default_theme_color.replace(/^#/, '');
@@ -393,14 +528,68 @@ export class SettingsService {
       }
       updates.push(['web_app_url', cleanWebUrl]);
     }
+    if (input.show_web_portal_url !== undefined) {
+      updates.push(['show_web_portal_url', toBit(input.show_web_portal_url)]);
+    }
     if (input.prevent_screenshot !== undefined) {
-      const val =
-        input.prevent_screenshot === true ||
-        input.prevent_screenshot === '1' ||
-        input.prevent_screenshot === 'yes'
-          ? '1'
-          : '0';
-      updates.push(['prevent_screenshot', val]);
+      updates.push(['prevent_screenshot', toBit(input.prevent_screenshot)]);
+    }
+    if (input.cloudflare_enabled !== undefined) {
+      updates.push(['cloudflare_enabled', toBit(input.cloudflare_enabled)]);
+    }
+    if (input.cloudflare_proxy_secret !== undefined) {
+      updates.push(['cloudflare_proxy_secret', String(input.cloudflare_proxy_secret).trim()]);
+    }
+    if (input.cloudflare_turnstile_site_key !== undefined) {
+      updates.push(['cloudflare_turnstile_site_key', String(input.cloudflare_turnstile_site_key).trim()]);
+    }
+    if (input.cloudflare_turnstile_secret_key !== undefined) {
+      updates.push(['cloudflare_turnstile_secret_key', String(input.cloudflare_turnstile_secret_key).trim()]);
+    }
+    if (input.allow_rooted_device !== undefined) {
+      updates.push(['allow_rooted_device', toBit(input.allow_rooted_device)]);
+    }
+    if (input.mobile_session_timeout_hours !== undefined) {
+      const hours = Math.max(1, Math.min(8760, Number(input.mobile_session_timeout_hours) || 168));
+      updates.push(['mobile_session_timeout_hours', String(hours)]);
+    }
+    if (input.project_terminology !== undefined) {
+      const mode = input.project_terminology === 'department' ? 'department' : 'project';
+      updates.push(['project_terminology', mode]);
+    }
+    if (input.enable_push_notification !== undefined) {
+      updates.push(['enable_push_notification', toBit(input.enable_push_notification)]);
+    }
+    if (input.enable_chat_via_pusher !== undefined) {
+      updates.push(['enable_chat_via_pusher', toBit(input.enable_chat_via_pusher)]);
+    }
+    if (input.pusher_app_id !== undefined) {
+      updates.push(['pusher_app_id', String(input.pusher_app_id).trim()]);
+    }
+    if (input.pusher_key !== undefined) {
+      updates.push(['pusher_key', String(input.pusher_key).trim()]);
+    }
+    if (input.pusher_secret !== undefined) {
+      updates.push(['pusher_secret', String(input.pusher_secret).trim()]);
+    }
+    if (input.pusher_cluster !== undefined && String(input.pusher_cluster).trim()) {
+      updates.push(['pusher_cluster', String(input.pusher_cluster).trim()]);
+    }
+    if (input.max_upload_size !== undefined) {
+      const mb = Math.max(1, Math.min(500, Number(input.max_upload_size) || 25));
+      updates.push(['max_upload_size', String(mb)]);
+    }
+    if (input.show_todo !== undefined) {
+      updates.push(['show_todo', toBit(input.show_todo)]);
+    }
+    if (input.show_kanban !== undefined) {
+      updates.push(['show_kanban', toBit(input.show_kanban)]);
+    }
+    if (input.show_attendance !== undefined) {
+      updates.push(['show_attendance', toBit(input.show_attendance)]);
+    }
+    if (input.google_oauth_client_id !== undefined) {
+      updates.push(['google_oauth_client_id', String(input.google_oauth_client_id).trim()]);
     }
     if (input.upload_doc_path !== undefined && input.upload_doc_path.trim()) {
       const cleanPath = input.upload_doc_path.trim();
@@ -436,6 +625,9 @@ export class SettingsService {
     for (const [name, value] of updates) {
       await this.upsertSetting(name, value);
     }
+
+    pusherService.invalidateCache();
+    invalidateCloudflarePolicyCache();
 
     return this.getPlatformSettings();
   }

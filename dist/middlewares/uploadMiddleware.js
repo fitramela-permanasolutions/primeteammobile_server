@@ -2,6 +2,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { settingsService } from '../services/settingsService.js';
+import { sendError } from '../utils/response.js';
 function ensureDirWithPermissions(baseDir, subSegments) {
     let current = baseDir;
     if (!fs.existsSync(current)) {
@@ -34,16 +35,21 @@ const storage = multer.diskStorage({
             const projectId = req.body.project_id ||
                 req.body.projectId ||
                 req.params.projectId ||
+                (req.originalUrl?.includes('/projects/') ? req.params.id : undefined) ||
                 req.query.projectId ||
                 req.query.project_id;
             const isSystemUpload = req.originalUrl?.includes('/settings/upload-logo') ||
                 req.originalUrl?.includes('/settings/upload-background');
+            const isTaskCommentUpload = req.originalUrl?.includes('/tasks/') && req.originalUrl?.includes('/comments');
             let subSegments = ['general', 'global_files', 'all'];
             if (isSystemUpload) {
                 subSegments = ['system'];
             }
             else if (projectId) {
                 subSegments = ['project_files', String(projectId)];
+            }
+            else if (isTaskCommentUpload) {
+                subSegments = ['timeline_files'];
             }
             const targetDir = ensureDirWithPermissions(baseUploadDir, subSegments);
             cb(null, targetDir);
@@ -65,6 +71,32 @@ const storage = multer.diskStorage({
 export const upload = multer({
     storage,
     limits: {
-        fileSize: 25 * 1024 * 1024, // 25 MB max limit
+        fileSize: 500 * 1024 * 1024, // Hard cap 500 MB; dynamic admin max_upload_size enforced by validateUploadSize
     },
 });
+export async function validateUploadSize(req, res, next) {
+    try {
+        if (!req.file) {
+            next();
+            return;
+        }
+        const maxBytes = await settingsService.getMaxUploadSizeBytes();
+        if (req.file.size > maxBytes) {
+            const maxMb = Math.round(maxBytes / (1024 * 1024));
+            try {
+                if (req.file.path && fs.existsSync(req.file.path)) {
+                    fs.unlinkSync(req.file.path);
+                }
+            }
+            catch {
+                // ignore cleanup error
+            }
+            sendError(res, `Ukuran berkas melebihi batas maksimal ${maxMb} MB yang ditetapkan oleh Admin.`, 400);
+            return;
+        }
+        next();
+    }
+    catch {
+        next();
+    }
+}

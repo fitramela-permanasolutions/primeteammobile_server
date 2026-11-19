@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import routes from './routes/index.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { debugMiddleware } from './middlewares/debugMiddleware.js';
+import { cloudflareMiddleware } from './middlewares/cloudflareMiddleware.js';
 import { settingsService } from './services/settingsService.js';
 import { fileService } from './services/fileService.js';
 dotenv.config();
@@ -64,8 +65,8 @@ app.get('/docs/openapi.json', (req, res) => {
         res.status(404).json({ error: 'OpenAPI specification not found' });
     }
 });
-// API Routes
-app.use('/api/v1', routes);
+// API Routes (protected by optional Admin Cloudflare Protection middleware)
+app.use('/api/v1', cloudflareMiddleware, routes);
 // 404 Handler
 app.use((req, res) => {
     res.status(404).json({ success: false, message: `Route ${req.method} ${req.url} not found` });

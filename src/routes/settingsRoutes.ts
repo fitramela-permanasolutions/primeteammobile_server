@@ -9,6 +9,10 @@ const router = Router();
 router.get('/platform', (req, res) => settingsController.getPlatformSettings(req, res));
 
 // Admin/Superadmin protected endpoints to update technical platform settings in DB
+router.get('/admin-secrets', authMiddleware, adminMiddleware, (req, res) =>
+  settingsController.getAdminSecrets(req, res)
+);
+
 router.put('/platform', authMiddleware, adminMiddleware, (req, res) =>
   settingsController.updatePlatformSettings(req, res)
 );

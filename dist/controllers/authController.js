@@ -1,18 +1,78 @@
 import { authService } from '../services/authService.js';
 import { sendSuccess, sendError } from '../utils/response.js';
+function extractDeviceMeta(req) {
+    const cfIp = req.headers['cf-connecting-ip'];
+    const fwdIp = req.headers['x-forwarded-for'];
+    const rawIp = Array.isArray(cfIp)
+        ? cfIp[0]
+        : typeof cfIp === 'string'
+            ? cfIp
+            : Array.isArray(fwdIp)
+                ? fwdIp[0]
+                : typeof fwdIp === 'string'
+                    ? fwdIp.split(',')[0].trim()
+                    : req.ip || '';
+    const device = req.body?.deviceInfo || {};
+    return {
+        ip_address: rawIp,
+        device_id: device.device_id || '',
+        device_brand: device.device_brand || '',
+        device_model: device.device_model || '',
+        os_name: device.os_name || '',
+        os_version: device.os_version || '',
+        app_version: device.app_version || '',
+    };
+}
 export class AuthController {
     async login(req, res) {
         try {
             const { email, password } = req.body;
             if (!email || !password) {
-                sendError(res, 'Email and password are required', 400);
+                sendError(res, 'Email dan kata sandi wajib diisi', 400);
                 return;
             }
-            const result = await authService.login(email, password);
-            sendSuccess(res, result, 'Login successful');
+            const result = await authService.login(email, password, extractDeviceMeta(req));
+            sendSuccess(res, result, 'Login berhasil');
         }
         catch (error) {
-            sendError(res, error.message || 'Login failed', 401);
+            sendError(res, error.message || 'Login gagal', 401);
+        }
+    }
+    async googleLogin(req, res) {
+        try {
+            const { accessToken, idToken } = req.body || {};
+            if (!accessToken && !idToken) {
+                sendError(res, 'Token Google wajib disertakan', 400);
+                return;
+            }
+            const result = await authService.googleLogin({ accessToken, idToken }, extractDeviceMeta(req));
+            sendSuccess(res, result, 'Login Google berhasil');
+        }
+        catch (error) {
+            sendError(res, error.message || 'Login Google gagal', 401);
+        }
+    }
+    async getSessions(req, res) {
+        try {
+            const sessions = await authService.getActiveSessions();
+            sendSuccess(res, sessions, 'Active mobile sessions retrieved');
+        }
+        catch (error) {
+            sendError(res, error.message || 'Gagal mengambil daftar sesi perangkat', 500);
+        }
+    }
+    async revokeSession(req, res) {
+        try {
+            const { sessionId } = req.params;
+            if (!sessionId) {
+                sendError(res, 'ID sesi wajib diisi', 400);
+                return;
+            }
+            const result = await authService.revokeSession(sessionId);
+            sendSuccess(res, result, 'Sesi perangkat berhasil diputus');
+        }
+        catch (error) {
+            sendError(res, error.message || 'Gagal memutus sesi perangkat', 500);
         }
     }
     async me(req, res) {
@@ -49,7 +109,7 @@ export class AuthController {
     async logout(req, res) {
         try {
             if (req.user) {
-                await authService.logout(req.user.id);
+                await authService.logout(req.user.id, req.user.sid);
             }
             sendSuccess(res, null, 'Logged out successfully');
         }

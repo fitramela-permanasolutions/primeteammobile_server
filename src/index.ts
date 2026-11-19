@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import routes from './routes/index.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { debugMiddleware } from './middlewares/debugMiddleware.js';
+import { cloudflareMiddleware } from './middlewares/cloudflareMiddleware.js';
 import { settingsService } from './services/settingsService.js';
 import { fileService } from './services/fileService.js';
 
@@ -80,8 +81,8 @@ app.get('/docs/openapi.json', (req, res) => {
   }
 });
 
-// API Routes
-app.use('/api/v1', routes);
+// API Routes (protected by optional Admin Cloudflare Protection middleware)
+app.use('/api/v1', cloudflareMiddleware, routes);
 
 // 404 Handler
 app.use((req, res) => {
