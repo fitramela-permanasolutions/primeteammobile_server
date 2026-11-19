@@ -67,8 +67,9 @@ export class AuthController {
                 return;
             }
             const appRedirectUri = String(req.query.app_redirect_uri || 'primeteam://google-auth').trim();
-            const proto = req.headers['x-forwarded-proto']?.split(',')[0]?.trim() || req.protocol || 'https';
-            const host = req.get('host');
+            const host = req.get('host') || 'mobileserver.indodefence.net';
+            const isLocalHost = /^(localhost|127\.0\.0\.1|10\.|192\.168\.)/i.test(host);
+            const proto = isLocalHost ? req.protocol || 'http' : 'https';
             const httpsCallbackUrl = `${proto}://${host}/api/v1/auth/google/callback`;
             const responseType = clientSecret ? 'code' : 'token';
             const params = new URLSearchParams({
@@ -119,8 +120,9 @@ export class AuthController {
                 const secrets = await settingsService.getAdminSecrets();
                 const clientId = (secrets.google_oauth_client_id || '').trim();
                 const clientSecret = (secrets.google_oauth_client_secret || '').trim();
-                const proto = req.headers['x-forwarded-proto']?.split(',')[0]?.trim() || req.protocol || 'https';
-                const host = req.get('host');
+                const host = req.get('host') || 'mobileserver.indodefence.net';
+                const isLocalHost = /^(localhost|127\.0\.0\.1|10\.|192\.168\.)/i.test(host);
+                const proto = isLocalHost ? req.protocol || 'http' : 'https';
                 const httpsCallbackUrl = `${proto}://${host}/api/v1/auth/google/callback`;
                 const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
                     method: 'POST',

@@ -99,6 +99,7 @@ export class SettingsService {
       'show_todo',
       'show_kanban',
       'show_attendance',
+      'enable_google_login',
       'google_oauth_client_id',
       'google_drive_client_id',
     ];
@@ -216,6 +217,7 @@ export class SettingsService {
       show_todo: map.show_todo !== '0',
       show_kanban: map.show_kanban !== '0',
       show_attendance: map.show_attendance !== '0',
+      enable_google_login: map.enable_google_login !== '0',
       google_oauth_client_id: (
         map.google_oauth_client_id ||
         process.env.GOOGLE_CLIENT_ID ||
@@ -509,6 +511,7 @@ export class SettingsService {
     show_todo?: boolean | string;
     show_kanban?: boolean | string;
     show_attendance?: boolean | string;
+    enable_google_login?: boolean | string;
     google_oauth_client_id?: string;
     google_oauth_client_secret?: string;
     show_logo_in_signin_page?: boolean | string;
@@ -600,6 +603,9 @@ export class SettingsService {
     }
     if (input.show_attendance !== undefined) {
       updates.push(['show_attendance', toBit(input.show_attendance)]);
+    }
+    if (input.enable_google_login !== undefined) {
+      updates.push(['enable_google_login', toBit(input.enable_google_login)]);
     }
     if (input.google_oauth_client_id !== undefined) {
       updates.push(['google_oauth_client_id', String(input.google_oauth_client_id).trim()]);
