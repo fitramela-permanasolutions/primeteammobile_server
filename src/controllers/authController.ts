@@ -60,6 +60,57 @@ export class AuthController {
     }
   }
 
+  /**
+   * HTTPS OAuth 2.0 callback bridge compliant with Google Web Client ID policy.
+   * Reads the fragment (#access_token=...&state=<appReturnUrl>) in the browser
+   * and redirects back to the mobile app deep link (primeteam:// or exp://).
+   */
+  googleOAuthCallback(req: Request, res: Response): void {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(`<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mengalihkan ke PrimeTeam...</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f8fafc; color: #0f172a; padding: 24px; text-align: center; }
+    .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 24px; max-width: 360px; width: 100%; box-shadow: 0 4px 16px rgba(15,23,42,0.06); }
+    .btn { display: inline-block; margin-top: 16px; background: #00628d; color: #fff; text-decoration: none; padding: 12px 20px; border-radius: 10px; font-weight: 700; font-size: 14px; }
+    p { color: #64748b; font-size: 13px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h3 style="margin:0 0 8px 0;">Autentikasi Google Berhasil</h3>
+    <p>Sedang mengarahkan kembali ke aplikasi PrimeTeam...</p>
+    <a id="openAppBtn" class="btn" href="primeteam://google-auth">Buka Aplikasi</a>
+  </div>
+  <script>
+    (function() {
+      var hash = window.location.hash ? window.location.hash.replace(/^#/, '') : '';
+      var query = window.location.search ? window.location.search.replace(/^\\?/, '') : '';
+      var params = new URLSearchParams(hash || query);
+      var rawState = params.get('state') || 'primeteam://google-auth';
+      var appReturnUrl = rawState;
+      try {
+        if (/^https?%3A|^primeteam%3A|^exp%3A/i.test(rawState)) {
+          appReturnUrl = decodeURIComponent(rawState);
+        }
+      } catch (e) {}
+      if (!/^(primeteam|exp|exps|https?):\\/\\//i.test(appReturnUrl)) {
+        appReturnUrl = 'primeteam://google-auth';
+      }
+      var target = appReturnUrl + (hash ? '#' + hash : (query ? '?' + query : ''));
+      var btn = document.getElementById('openAppBtn');
+      if (btn) btn.href = target;
+      window.location.replace(target);
+    })();
+  </script>
+</body>
+</html>`);
+  }
+
   async getSessions(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const sessions = await authService.getActiveSessions();
